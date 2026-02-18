@@ -16,6 +16,33 @@
   const MAX_RESULTS = 12;
   const GRAPHQL_ENDPOINT = new URL('/graphql', window.location.origin).toString();
 
+  // Reuse the ignore list from the Tag Stats userscript via localStorage
+  const IGNORE_TAGS_KEY = 'stashNewTagStatsIgnoreTags';
+
+  function normLabel(s) {
+    return (s ?? '').replace(/\s+/g, ' ').trim();
+  }
+
+  function loadIgnoreTagsFromStorage() {
+    try {
+      const raw = window.localStorage.getItem(IGNORE_TAGS_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map(v => normLabel(String(v))).filter(Boolean);
+    } catch {
+      return [];
+    }
+  }
+
+  let CURRENT_IGNORE_TAGS = loadIgnoreTagsFromStorage();
+
+  function isIgnoredLabel(label) {
+    const norm = normLabel(label).toLowerCase();
+    if (!norm) return false;
+    return CURRENT_IGNORE_TAGS.some(entry => normLabel(entry).toLowerCase() === norm);
+  }
+
 GM_addStyle(
   '.pm-overlay{' +
     'position:fixed;z-index:999999;width:760px;max-width:calc(100vw - 24px);max-height:70vh;overflow:auto;' +
@@ -39,6 +66,10 @@ GM_addStyle(
   '.pm-grid .card-popovers .btn{display:inline-flex;align-items:center;gap:6px;}' +
   '.pm-grid .card-popovers svg{width:1em;height:1em;}' +
   '.pm-grid hr{margin:8px 0;border-color:#2a2a2a;}' +
+  // Unmatched tag chips
+  '.pm-tag-list{margin-top:6px;font-size:12px;display:flex;flex-wrap:wrap;gap:4px;}' +
+  '.pm-tag-chip{padding:2px 6px;border-radius:999px;background:#222;color:#eee;border:1px solid #444;}' +
+  '.pm-tag-chip--unignored{background:#ffcc4d;color:#222;border-color:#e0b83c;}' +
   // Fit Stash cards nicely inside overlay
   '.pm-grid .performer-card{width:100% !important; margin:0 !important;}' +
   '.pm-grid .performer-card-image{height:400px;object-fit:cover;}' +
@@ -222,9 +253,32 @@ GM_addStyle(
     hint.appendChild(a);
     bodyEl.appendChild(hint);
   }
-    function safeStr(v) {
-  return (v === null || v === undefined) ? '' : String(v);
-}
+
+  // Helpers to read current scene tags (reusing Tag Stats ignore rules)
+  function isBlacklistTagSpan(el) {
+    if (!el || !el.closest) return false;
+    const container = el.closest('div');
+    if (!container) return false;
+    const h5 = container.querySelector('h5');
+    if (!h5) return false;
+    return (h5.textContent || '').trim().toLowerCase() === 'blacklist';
+  }
+
+  function getCurrentSceneTags() {
+    const nodes = document.querySelectorAll('span.tag-item.badge.badge-secondary');
+    const labels = [];
+    nodes.forEach(n => {
+      if (isBlacklistTagSpan(n)) return;
+      const label = normLabel(n.textContent);
+      if (!label) return;
+      labels.push(label);
+    });
+    return labels;
+  }
+
+  function safeStr(v) {
+    return (v === null || v === undefined) ? '' : String(v);
+  }
 
   function hostFromEndpoint(endpoint) {
   try { return new URL(endpoint).host.replace(/^www\./, ''); }
@@ -468,7 +522,7 @@ const ICONS = {
 }
 
 
- function renderResults(bodyEl, q, performers) {
+ function renderResults(bodyEl, q, performers, sceneTags) {
   bodyEl.textContent = '';
 
   if (!performers || !performers.length) {
@@ -484,7 +538,7 @@ const ICONS = {
   bodyEl.appendChild(grid);
 
   performers.forEach((p) => {
-    grid.appendChild(buildStashPerformerCard(p));
+    grid.appendChild(buildStashPerformerCard(p, sceneTags));
   });
 
   const hint = document.createElement('div');
@@ -493,7 +547,7 @@ const ICONS = {
   bodyEl.appendChild(hint);
 }
 
-function buildStashPerformerCard(p) {
+function buildStashPerformerCard(p, sceneTags) {
   const perfUrl = new URL('/performers/' + p.id, window.location.origin).toString();
 
   // Outer card container (same classes as Stash)
@@ -577,6 +631,41 @@ aTitle.rel = 'noopener noreferrer';
     age.className = 'performer-card__age';
     age.textContent = ageText;
     section.appendChild(age);
+  }
+
+  // Unmatched tags vs. current scene (non-ignored only)
+  try {
+    const sceneTagSet = new Set(
+      (Array.isArray(sceneTags) ? sceneTags : []).map(t => normLabel(t).toLowerCase())
+    );
+    const perfTags = Array.isArray(p.tags) ? p.tags : [];
+    const unmatched = [];
+
+    perfTags.forEach(tag => {
+      const label = normLabel(tag && tag.name ? tag.name : '');
+      if (!label) return;
+      const key = label.toLowerCase();
+      if (sceneTagSet.has(key)) return;      // already on scene
+      if (isIgnoredLabel(label)) return;     // globally ignored
+      unmatched.push(label);
+    });
+
+    if (unmatched.length) {
+      const tagWrap = document.createElement('div');
+      tagWrap.className = 'pm-tag-list';
+
+      unmatched.forEach(label => {
+        const chip = document.createElement('span');
+        chip.className = 'pm-tag-chip pm-tag-chip--unignored';
+        chip.textContent = label;
+        tagWrap.appendChild(chip);
+      });
+
+      section.appendChild(tagWrap);
+    }
+  } catch (e) {
+    // Fail quietly if anything goes wrong; core popover should still work
+    console.warn('[PerformerMatchPopOver] Failed to compute unmatched tags', e);
   }
 
   // Compose card
@@ -684,7 +773,8 @@ function computeAgeText(birthdate) {
 
       try {
         const performers = await fetchMatches(q);
-        renderResults(bodyEl, q, performers);
+        const sceneTags = getCurrentSceneTags();
+        renderResults(bodyEl, q, performers, sceneTags);
       } catch (err) {
         renderError(bodyEl, err, q);
       }

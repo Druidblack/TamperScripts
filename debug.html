@@ -1,0 +1,457 @@
+<div x-init="$nextTick(() =&gt; {
+    if (window.hash &amp;&amp; window.hash.includes(':')) {
+        initClip()
+        extractClipTime(clipTime)
+
+        if (clipStartSeconds &gt; 0 &amp;&amp; clipEndSeconds &gt; 0) {
+            isLooping = true
+        }
+    }
+
+    $watch('clipStartTime', () =&gt; {
+        extractClipTime(clipTime)
+        updateHash()
+    })
+
+    $watch('clipEndTime', () =&gt; {
+        extractClipTime(clipTime)
+        updateHash()
+    })
+
+    document.addEventListener('playing', () =&gt; {
+        if (isJumped) {
+            return
+        }
+
+        window.player.currentTime = clipStartSeconds
+        isJumped = true
+    })
+
+    document.addEventListener('timeupdate', () =&gt; {
+        if (! clipEndSeconds) {
+            return
+        }
+
+        if (isLooping &amp;&amp; Math.round(window.player.currentTime) &lt; clipStartSeconds) {
+            window.player.currentTime = clipStartSeconds
+        }
+
+        if (isLooping &amp;&amp; Math.round(window.player.currentTime) &gt; clipEndSeconds + 1) {
+            window.player.currentTime = clipStartSeconds
+        }
+    })
+
+    if (window.isPublished &amp;&amp; window.user_uuid) {
+        window.recombeeClient.send(new recombee.AddDetailView(window.user_uuid, 'onsg-075-uncensored-leak', {
+            recommId: window.currentRecommendId,
+        }))
+    }
+})" x-data="{
+    baseUrl: 'https://missav.ws/dm24/en/onsg-075-uncensored-leak',
+    directUrls: JSON.parse('[\u0022https:\\\/\\\/tsyndicate.com\\\/api\\\/v1\\\/direct\\\/c65c80b49bf04c139b29dba8137a6419\u0022,\u0022https:\\\/\\\/tsyndicate.com\\\/api\\\/v1\\\/direct\\\/c65c80b49bf04c139b29dba8137a6419?2\u0022,\u0022https:\\\/\\\/tsyndicate.com\\\/api\\\/v1\\\/direct\\\/c65c80b49bf04c139b29dba8137a6419?3\u0022,\u0022https:\\\/\\\/tsyndicate.com\\\/api\\\/v1\\\/direct\\\/c65c80b49bf04c139b29dba8137a6419?4\u0022,\u0022https:\\\/\\\/tsyndicate.com\\\/api\\\/v1\\\/direct\\\/c65c80b49bf04c139b29dba8137a6419?5\u0022,\u0022https:\\\/\\\/tsyndicate.com\\\/api\\\/v1\\\/direct\\\/c65c80b49bf04c139b29dba8137a6419?6\u0022,\u0022https:\\\/\\\/tsyndicate.com\\\/api\\\/v1\\\/direct\\\/c65c80b49bf04c139b29dba8137a6419?7\u0022,\u0022https:\\\/\\\/tsyndicate.com\\\/api\\\/v1\\\/direct\\\/c65c80b49bf04c139b29dba8137a6419?8\u0022,\u0022https:\\\/\\\/ad.twinrdengine.com\\\/adraw?zone=01DXF6DT004000000000001JGA\\u0026kw=COMMA_SEPARATED_KEYWORDS\u0022,\u0022https:\\\/\\\/ad.twinrdengine.com\\\/adraw?zone=01DXF6DT004000000000001JGA\\u0026kw=COMMA_SEPARATED_KEYWORDS\\u00262\u0022,\u0022https:\\\/\\\/diffusedpassionquaking.com\\\/1919723\\\/\u0022,\u0022https:\\\/\\\/diffusedpassionquaking.com\\\/1919723\\\/?2\u0022,\u0022https:\\\/\\\/diffusedpassionquaking.com\\\/1919723\\\/?3\u0022,\u0022https:\\\/\\\/go.myavlive.com\\\/easy?campaignId=ff0b763268d316cf081ec8d3bd43ab3e5d8dd09b8fb261d4a3f1a3449ba4186b\\u0026userId=050103608cf9b4d04684e5804b8637ff881d466e3ceaf77c1cc78be33cb1f3fe\u0022]'),
+    directUrlsIphone: JSON.parse('[\u0022https:\\\/\\\/tsyndicate.com\\\/api\\\/v1\\\/direct\\\/c65c80b49bf04c139b29dba8137a6419\u0022,\u0022https:\\\/\\\/tsyndicate.com\\\/api\\\/v1\\\/direct\\\/c65c80b49bf04c139b29dba8137a6419?2\u0022,\u0022https:\\\/\\\/tsyndicate.com\\\/api\\\/v1\\\/direct\\\/c65c80b49bf04c139b29dba8137a6419?3\u0022,\u0022https:\\\/\\\/tsyndicate.com\\\/api\\\/v1\\\/direct\\\/c65c80b49bf04c139b29dba8137a6419?4\u0022,\u0022https:\\\/\\\/tsyndicate.com\\\/api\\\/v1\\\/direct\\\/c65c80b49bf04c139b29dba8137a6419?5\u0022,\u0022https:\\\/\\\/tsyndicate.com\\\/api\\\/v1\\\/direct\\\/c65c80b49bf04c139b29dba8137a6419?6\u0022,\u0022https:\\\/\\\/tsyndicate.com\\\/api\\\/v1\\\/direct\\\/c65c80b49bf04c139b29dba8137a6419?7\u0022,\u0022https:\\\/\\\/tsyndicate.com\\\/api\\\/v1\\\/direct\\\/c65c80b49bf04c139b29dba8137a6419?8\u0022,\u0022https:\\\/\\\/ad.twinrdengine.com\\\/adraw?zone=01DXF6DT004000000000001JGA\\u0026kw=COMMA_SEPARATED_KEYWORDS\u0022,\u0022https:\\\/\\\/ad.twinrdengine.com\\\/adraw?zone=01DXF6DT004000000000001JGA\\u0026kw=COMMA_SEPARATED_KEYWORDS\\u00262\u0022,\u0022https:\\\/\\\/diffusedpassionquaking.com\\\/1919723\\\/\u0022,\u0022https:\\\/\\\/diffusedpassionquaking.com\\\/1919723\\\/?2\u0022,\u0022https:\\\/\\\/diffusedpassionquaking.com\\\/1919723\\\/?3\u0022,\u0022https:\\\/\\\/go.myavlive.com\\\/easy?campaignId=ff0b763268d316cf081ec8d3bd43ab3e5d8dd09b8fb261d4a3f1a3449ba4186b\\u0026userId=050103608cf9b4d04684e5804b8637ff881d466e3ceaf77c1cc78be33cb1f3fe\u0022]'),
+    popped: $persist({
+        urls: [],
+        timestamp: 0,
+    }).using(sessionStorage),
+    popOnce: false,
+    isJumped: false,
+    isLooping: false,
+    clipTime: '',
+    clipStartTime: '',
+    clipEndTime: '',
+    clipStartSeconds: 0,
+    clipEndSeconds: 0,
+    initClip() {
+        const hash = decodeURI(window.location.hash.substr(1))
+
+        this.clipTime = hash;
+
+        if (this.clipTime.includes('-')) {
+            const clipTimeSegments = this.clipTime.split('-')
+
+            this.clipStartTime = clipTimeSegments[0]
+            this.clipEndTime = clipTimeSegments[1]
+        } else {
+            this.clipStartTime = this.clipTime
+            this.clipEndTime = ''
+        }
+    },
+    extractClipTime(clipTime) {
+        const extractTimePosition = position =&gt; {
+            const clipTime = this[`clip${position}Time`]
+
+            if (! clipTime) {
+                return 0
+            }
+
+            const timeSegments = clipTime.split(':').reverse().map(segment =&gt; parseInt(segment))
+
+            let seconds = 0, i = 0
+
+            for (i = 0; i &lt; timeSegments.length; i++) {
+                if (i === 0) {
+                    seconds += timeSegments[i]
+                } else if (i === 1) {
+                    seconds += timeSegments[i] * 60
+                } else if (i === 2) {
+                    seconds += timeSegments[i] * 3600
+                }
+            }
+
+            return seconds
+        }
+
+        this.clipStartSeconds = extractTimePosition('Start')
+        this.clipEndSeconds = extractTimePosition('End')
+
+        if (this.clipStartSeconds &gt;= this.clipEndSeconds) {
+            this.clipEndSeconds = 0
+        }
+    },
+    jumpToClip() {
+        this.isJumped = false
+
+        if (this.clipEndSeconds) {
+            this.looping = true
+        }
+
+        window.player.currentTime = this.clipStartSeconds
+        window.player.play()
+    },
+    copyCurrentTime(field) {
+        const currentTime = Math.floor(window.player.currentTime)
+
+        const hour = Math.floor(currentTime / 3600).toString().padStart(2, '0')
+        const minute = Math.floor(currentTime % 3600 / 60).toString().padStart(2, '0')
+        const second = (currentTime % 60).toString().padStart(2, '0')
+
+        this[field] = `${hour}:${minute}:${second}`
+    },
+    isValidClipTime(clipTime) {
+        return clipTime &amp;&amp; clipTime.match(/^(?:(?:([01]?\d|2[0-3]):)?([0-5]?\d):)?([0-5]?\d)$/)
+    },
+    updateHash() {
+        let hash = this.baseUrl
+
+        if (this.clipStartSeconds &gt; 0 &amp;&amp; this.isValidClipTime(this.clipStartTime)) {
+            hash += `#${this.clipStartTime}`
+
+            if (this.clipEndSeconds &gt; 0 &amp;&amp; this.isValidClipTime(this.clipEndTime)) {
+                hash += `-${this.clipEndTime}`
+            }
+        }
+
+        history.replaceState(null, null, hash)
+
+        window.dispatchEvent(new CustomEvent('hashUpdated'))
+    },
+    pop() {
+        if (this.popOnce) {
+            return
+        }
+
+        this.popOnce = true
+
+        if (Date.now() - this.popped.timestamp &gt; 86400 * 1000 &amp;&amp; this.popped.urls.length &gt; 0) {
+            this.popped.urls = []
+        }
+
+        const directUrls = (window.navigator.userAgent.includes('iPhone') ? this.directUrlsIphone : this.directUrls)
+            .map(value =&gt; ({ value, sort: Math.random() }))
+            .sort((a, b) =&gt; a.sort - b.sort)
+            .map(({ value }) =&gt; value)
+
+        const nextDirectUrl = directUrls.find(directUrl =&gt; ! this.popped.urls.includes(directUrl))
+
+        if (nextDirectUrl) {
+            this.popped.urls.push(nextDirectUrl)
+            this.popped.timestamp = Date.now()
+
+            const popWindow = window.open(`/pop?url=${encodeURIComponent(nextDirectUrl)}`, '_blank')
+
+            const timer = setInterval(() =&gt; {
+                if (! popWindow || popWindow.closed) {
+                    clearInterval(timer)
+                    window.player.play()
+                }
+            }, 300)
+        }
+    },
+}">
+    <div class="relative -mx-4 sm:m-0 -mt-6">
+        <div @click="pop()" @keyup.space.window="pop()" class="aspect-w-16 aspect-h-9">
+            <div tabindex="0" style="--plyr-color-main: #fe628e; --plyr-captions-background: rgba(0, 0, 0, 0.5);"
+                class="plyr plyr--full-ui plyr--video plyr--html5 plyr--fullscreen-enabled plyr--pip-supported plyr__poster-enabled plyr--paused">
+                <div class="plyr__controls"><button class="plyr__controls__item plyr__control" type="button"
+                        data-plyr="rewind"><svg aria-hidden="true" focusable="false">
+                            <use xlink:href="#plyr-rewind"></use>
+                        </svg><span class="plyr__sr-only">Rewind 10s</span></button><button
+                        class="plyr__controls__item plyr__control" type="button" data-plyr="play" aria-label="Play"><svg
+                            class="icon--pressed" aria-hidden="true" focusable="false">
+                            <use xlink:href="#plyr-pause"></use>
+                        </svg><svg class="icon--not-pressed" aria-hidden="true" focusable="false">
+                            <use xlink:href="#plyr-play"></use>
+                        </svg><span class="label--pressed plyr__sr-only">Pause</span><span
+                            class="label--not-pressed plyr__sr-only">Play</span></button><button
+                        class="plyr__controls__item plyr__control" type="button" data-plyr="fast-forward"><svg
+                            aria-hidden="true" focusable="false">
+                            <use xlink:href="#plyr-fast-forward"></use>
+                        </svg><span class="plyr__sr-only">Forward 10s</span></button>
+                    <div class="plyr__controls__item plyr__progress__container">
+                        <div class="plyr__progress"><input data-plyr="seek" type="range" min="0" max="100" step="0.01"
+                                value="0" autocomplete="off" role="slider" aria-label="Seek" aria-valuemin="0"
+                                aria-valuemax="7821.6" aria-valuenow="15.988261" id="plyr-seek-2429"
+                                aria-valuetext="00:15 of 2:10:21" style="--value: 0.2%;"
+                                seek-value="87.42681906885977"><progress class="plyr__progress__buffer" min="0"
+                                max="100" value="0.6128669198118032" role="progressbar" aria-hidden="true">%
+                                buffered</progress><span class="plyr__tooltip" hidden=""
+                                style="left: 86.5347%;">1:52:48</span>
+                            <div class="plyr__preview-thumb" style="left: 199.5px;">
+                                <div class="plyr__preview-thumb__image-container" style="height: 103px; width: 183px;">
+                                    <img src="https://nineyu.com/d26dd08f-208e-4c67-9a39-4abccb558938/seek/_94.jpg"
+                                        data-index="3419"
+                                        style="height: 618px; width: 1103px; left: -919.643px; top: -515px;"></div>
+                                <div class="plyr__preview-thumb__time-container"><span>1:53:58</span></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="plyr__controls__item plyr__time--current plyr__time" aria-label="Current time">00:15
+                    </div>
+                    <div class="plyr__controls__item plyr__time--duration plyr__time" aria-label="Duration">2:10:21
+                    </div>
+                    <div class="plyr__controls__item plyr__volume"><button type="button" class="plyr__control"
+                            data-plyr="mute"><svg class="icon--pressed" aria-hidden="true" focusable="false">
+                                <use xlink:href="#plyr-muted"></use>
+                            </svg><svg class="icon--not-pressed" aria-hidden="true" focusable="false">
+                                <use xlink:href="#plyr-volume"></use>
+                            </svg><span class="label--pressed plyr__sr-only">Unmute</span><span
+                                class="label--not-pressed plyr__sr-only">Mute</span></button><input data-plyr="volume"
+                            type="range" min="0" max="1" step="0.05" value="1" autocomplete="off" role="slider"
+                            aria-label="Volume" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100"
+                            id="plyr-volume-2429" aria-valuetext="100.0%" style="--value: 100%;"></div><button
+                        class="plyr__controls__item plyr__control" type="button" data-plyr="captions"><svg
+                            class="icon--pressed" aria-hidden="true" focusable="false">
+                            <use xlink:href="#plyr-captions-on"></use>
+                        </svg><svg class="icon--not-pressed" aria-hidden="true" focusable="false">
+                            <use xlink:href="#plyr-captions-off"></use>
+                        </svg><span class="label--pressed plyr__sr-only">Disable captions</span><span
+                            class="label--not-pressed plyr__sr-only">Enable captions</span></button>
+                    <div class="plyr__controls__item plyr__menu"><button aria-haspopup="true"
+                            aria-controls="plyr-settings-2429" aria-expanded="false" type="button" class="plyr__control"
+                            data-plyr="settings"><svg aria-hidden="true" focusable="false">
+                                <use xlink:href="#plyr-settings"></use>
+                            </svg><span class="plyr__sr-only">Settings</span></button>
+                        <div class="plyr__menu__container" id="plyr-settings-2429" hidden="">
+                            <div style="">
+                                <div id="plyr-settings-2429-home">
+                                    <div role="menu"><button data-plyr="settings" type="button"
+                                            class="plyr__control plyr__control--forward" role="menuitem"
+                                            aria-haspopup="true" hidden=""><span>Captions<span
+                                                    class="plyr__menu__value">Disabled</span></span></button><button
+                                            data-plyr="settings" type="button"
+                                            class="plyr__control plyr__control--forward" role="menuitem"
+                                            aria-haspopup="true"><span>Quality<span
+                                                    class="plyr__menu__value">1080p</span></span></button><button
+                                            data-plyr="settings" type="button"
+                                            class="plyr__control plyr__control--forward" role="menuitem"
+                                            aria-haspopup="true"><span>Speed<span
+                                                    class="plyr__menu__value">2×</span></span></button></div>
+                                </div>
+                                <div id="plyr-settings-2429-captions" hidden=""><button type="button"
+                                        class="plyr__control plyr__control--back"><span
+                                            aria-hidden="true">Captions</span><span class="plyr__sr-only">Go back to
+                                            previous menu</span></button>
+                                    <div role="menu"></div>
+                                </div>
+                                <div id="plyr-settings-2429-quality" hidden=""><button type="button"
+                                        class="plyr__control plyr__control--back"><span
+                                            aria-hidden="true">Quality</span><span class="plyr__sr-only">Go back to
+                                            previous menu</span></button>
+                                    <div role="menu"><button data-plyr="quality" type="button" role="menuitemradio"
+                                            class="plyr__control" aria-checked="true" value="1080"><span>1080p<span
+                                                    class="plyr__menu__value"><span
+                                                        class="plyr__badge">HD</span></span></span></button><button
+                                            data-plyr="quality" type="button" role="menuitemradio" class="plyr__control"
+                                            aria-checked="false" value="720"><span>720p<span
+                                                    class="plyr__menu__value"><span
+                                                        class="plyr__badge">HD</span></span></span></button><button
+                                            data-plyr="quality" type="button" role="menuitemradio" class="plyr__control"
+                                            aria-checked="false" value="480"><span>480p<span
+                                                    class="plyr__menu__value"><span
+                                                        class="plyr__badge">SD</span></span></span></button><button
+                                            data-plyr="quality" type="button" role="menuitemradio" class="plyr__control"
+                                            aria-checked="false" value="360"><span>360p</span></button><button
+                                            data-plyr="quality" type="button" role="menuitemradio" class="plyr__control"
+                                            aria-checked="false" value="0"><span>Auto</span></button></div>
+                                </div>
+                                <div id="plyr-settings-2429-speed" hidden=""><button type="button"
+                                        class="plyr__control plyr__control--back"><span
+                                            aria-hidden="true">Speed</span><span class="plyr__sr-only">Go back to
+                                            previous menu</span></button>
+                                    <div role="menu"><button data-plyr="speed" type="button" role="menuitemradio"
+                                            class="plyr__control" aria-checked="false"
+                                            value="0.25"><span>0.25×</span></button><button data-plyr="speed"
+                                            type="button" role="menuitemradio" class="plyr__control"
+                                            aria-checked="false" value="0.5"><span>0.5×</span></button><button
+                                            data-plyr="speed" type="button" role="menuitemradio" class="plyr__control"
+                                            aria-checked="false" value="1"><span>Normal</span></button><button
+                                            data-plyr="speed" type="button" role="menuitemradio" class="plyr__control"
+                                            aria-checked="false" value="1.25"><span>1.25×</span></button><button
+                                            data-plyr="speed" type="button" role="menuitemradio" class="plyr__control"
+                                            aria-checked="false" value="1.5"><span>1.5×</span></button><button
+                                            data-plyr="speed" type="button" role="menuitemradio" class="plyr__control"
+                                            aria-checked="true" value="2"><span>2×</span></button></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div><button class="plyr__controls__item plyr__control" type="button" data-plyr="pip"><svg
+                            aria-hidden="true" focusable="false">
+                            <use xlink:href="#plyr-pip"></use>
+                        </svg><span class="plyr__sr-only">PIP</span></button><button
+                        class="plyr__controls__item plyr__control" type="button" data-plyr="fullscreen"><svg
+                            class="icon--pressed" aria-hidden="true" focusable="false">
+                            <use xlink:href="#plyr-exit-fullscreen"></use>
+                        </svg><svg class="icon--not-pressed" aria-hidden="true" focusable="false">
+                            <use xlink:href="#plyr-enter-fullscreen"></use>
+                        </svg><span class="label--pressed plyr__sr-only">Exit fullscreen</span><span
+                            class="label--not-pressed plyr__sr-only">Enter fullscreen</span></button>
+                </div>
+                <div class="plyr__video-wrapper"><video playsinline=""
+                        data-poster="https://fourhoi.com/onsg-075-uncensored-leak/cover-n.jpg" preload="none"
+                        class="player" crossorigin="anonymous" style=""
+                        src="blob:https://missav.ws/8996ec1d-f97c-430a-b4a3-fa42187e16bc">
+                    </video>
+                    <div class="plyr__poster"
+                        style="background-image: url(&quot;https://fourhoi.com/onsg-075-uncensored-leak/cover-n.jpg&quot;);">
+                    </div>
+                    <div class="plyr__preview-scrubbing"></div>
+                </div>
+                <div class="plyr__captions"></div><button type="button" class="plyr__control plyr__control--overlaid"
+                    data-plyr="play" aria-label="Play"><svg aria-hidden="true" focusable="false">
+                        <use xlink:href="#plyr-play"></use>
+                    </svg><span class="plyr__sr-only">Play</span></button>
+            </div>
+        </div>
+    </div>
+    <div class="sm:hidden flex justify-between -mx-4 px-4 pt-3 pb-1 bg-black">
+        <span class="isolate inline-flex rounded-md shadow-sm">
+            <button @click.prevent="window.player.currentTime -= 600" type="button"
+                class="relative inline-flex items-center rounded-l-md bg-transparent pl-2 pr-3 py-2 text-xs font-semibold text-white ring-1 ring-inset ring-white hover:bg-primary focus:z-10">
+                <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path fill-rule="evenodd"
+                        d="M15.79 14.77a.75.75 0 01-1.06.02l-4.5-4.25a.75.75 0 010-1.08l4.5-4.25a.75.75 0 111.04 1.08L11.832 10l3.938 3.71a.75.75 0 01.02 1.06zm-6 0a.75.75 0 01-1.06.02l-4.5-4.25a.75.75 0 010-1.08l4.5-4.25a.75.75 0 111.04 1.08L5.832 10l3.938 3.71a.75.75 0 01.02 1.06z"
+                        clip-rule="evenodd"></path>
+                </svg>
+                10m
+            </button>
+            <button @click.prevent="window.player.currentTime -= 60" type="button"
+                class="relative -ml-px inline-flex items-center bg-transparent px-2 pr-3 py-2 text-xs font-semibold text-white ring-1 ring-inset ring-white hover:bg-primary focus:z-10">
+                <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path fill-rule="evenodd"
+                        d="M12.79 5.23a.75.75 0 01-.02 1.06L8.832 10l3.938 3.71a.75.75 0 11-1.04 1.08l-4.5-4.25a.75.75 0 010-1.08l4.5-4.25a.75.75 0 011.06.02z"
+                        clip-rule="evenodd"></path>
+                </svg>
+                1m
+            </button>
+            <button @click.prevent="window.player.currentTime -= 10" type="button"
+                class="relative -ml-px inline-flex items-center rounded-r-md bg-transparent pl-2 pr-3 py-2 text-xs font-semibold text-white ring-1 ring-inset ring-white hover:bg-primary focus:z-10">
+                <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path fill-rule="evenodd"
+                        d="M12.79 5.23a.75.75 0 01-.02 1.06L8.832 10l3.938 3.71a.75.75 0 11-1.04 1.08l-4.5-4.25a.75.75 0 010-1.08l4.5-4.25a.75.75 0 011.06.02z"
+                        clip-rule="evenodd"></path>
+                </svg>
+                10s
+            </button>
+        </span>
+        <span class="isolate inline-flex rounded-md shadow-sm">
+            <button @click.prevent="window.player.currentTime += 10" type="button"
+                class="relative inline-flex items-center rounded-l-md bg-transparent pl-3 pr-2 py-2 text-xs font-semibold text-white ring-1 ring-inset ring-white hover:bg-primary focus:z-10">
+                10s
+                <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path fill-rule="evenodd"
+                        d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z"
+                        clip-rule="evenodd"></path>
+                </svg>
+            </button>
+            <button @click.prevent="window.player.currentTime += 60" type="button"
+                class="relative -ml-px inline-flex items-center bg-transparent pl-3 pr-2 py-2 text-xs font-semibold text-white ring-1 ring-inset ring-white hover:bg-primary focus:z-10">
+                1m
+                <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path fill-rule="evenodd"
+                        d="M7.21 14.77a.75.75 0 01.02-1.06L11.168 10 7.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z"
+                        clip-rule="evenodd"></path>
+                </svg>
+            </button>
+            <button @click.prevent="window.player.currentTime += 600" type="button"
+                class="relative -ml-px inline-flex items-center rounded-r-md bg-transparent pl-3 pr-2 py-2 text-xs font-semibold text-white ring-1 ring-inset ring-white hover:bg-primary focus:z-10">
+                10m
+                <svg class="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                    <path fill-rule="evenodd"
+                        d="M10.21 14.77a.75.75 0 01.02-1.06L14.168 10 10.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z"
+                        clip-rule="evenodd"></path>
+                    <path fill-rule="evenodd"
+                        d="M4.21 14.77a.75.75 0 01.02-1.06L8.168 10 4.23 6.29a.75.75 0 111.04-1.08l4.5 4.25a.75.75 0 010 1.08l-4.5 4.25a.75.75 0 01-1.06-.02z"
+                        clip-rule="evenodd"></path>
+                </svg>
+            </button>
+        </span>
+    </div>
+    <div class="-mx-4 sm:m-0 px-4 py-2 sm:py-4 bg-black rounded-b-0 sm:rounded-b-lg">
+        <div class="flex items-center flex-nowrap leading-5">
+            <div class="grow">
+                <label for="clip-start-time" class="hidden">Start from</label>
+                <input x-model="clipStartTime" type="text" placeholder="00:00:00" id="clip-start-time"
+                    class="text-right w-18 sm:w-20 p-0 border-0 border-b border-gray-300 text-sm sm:text-base text-gray-300 font-mono bg-transparent focus:border-transparent focus:ring-0">
+                <a @click.prevent="copyCurrentTime('clipStartTime')" href="#">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="inline h-4 w-4 sm:h-5 sm:w-5 text-nord13"
+                        viewBox="0 0 20 20" fill="currentColor">
+                        <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z"></path>
+                        <path
+                            d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z">
+                        </path>
+                    </svg>
+                </a>
+                <svg xmlns="http://www.w3.org/2000/svg" class="inline mx-0 sm:mx-1 h-3 w-3 xs:h-5 xs:w-5 text-gray-300"
+                    viewBox="0 0 20 20" fill="currentColor">
+                    <path fill-rule="evenodd"
+                        d="M10.293 15.707a1 1 0 010-1.414L14.586 10l-4.293-4.293a1 1 0 111.414-1.414l5 5a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0z"
+                        clip-rule="evenodd"></path>
+                    <path fill-rule="evenodd"
+                        d="M4.293 15.707a1 1 0 010-1.414L8.586 10 4.293 5.707a1 1 0 011.414-1.414l5 5a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0z"
+                        clip-rule="evenodd"></path>
+                </svg>
+                <label for="clip-end-time" class="hidden">Loop to</label>
+                <input x-model="clipEndTime" type="text" placeholder="00:00:00" id="clip-end-time"
+                    class="text-right w-18 sm:w-20 p-0 border-0 border-b border-gray-300 text-sm sm:text-base text-gray-300 font-mono bg-transparent focus:border-transparent focus:ring-0">
+                <a @click.prevent="copyCurrentTime('clipEndTime')" href="#">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="inline h-4 w-4 sm:h-5 sm:w-5 text-nord13"
+                        viewBox="0 0 20 20" fill="currentColor">
+                        <path d="M8 3a1 1 0 011-1h2a1 1 0 110 2H9a1 1 0 01-1-1z"></path>
+                        <path
+                            d="M6 3a2 2 0 00-2 2v11a2 2 0 002 2h8a2 2 0 002-2V5a2 2 0 00-2-2 3 3 0 01-3 3H9a3 3 0 01-3-3z">
+                        </path>
+                    </svg>
+                </a>
+            </div>
+            <div class="sm:ml-6">
+                <button :class="{
+                    'bg-primary': isLooping,
+                    'hover:bg-opacity-75': isLooping,
+                    'active:bg-nord3': isLooping,
+                    'border-1': ! isLooping,
+                    'border-white': ! isLooping,
+                }" @click.prevent="isLooping = ! isLooping" type="button"
+                    class="inline-flex items-center whitespace-nowrap px-2.5 py-1.5 border border-transparent text-xs font-medium rounded shadow-sm text-white border-1 border-white">
+                    Looping
+                    <svg :class="{
+                        'text-emerald-400': isLooping,
+                        'text-red-500': ! isLooping,
+                    }" class="ml-1.5 h-2 w-2 text-red-500" fill="currentColor" viewBox="0 0 8 8">
+                        <circle cx="4" cy="4" r="3"></circle>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
