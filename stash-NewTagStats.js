@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         StashNewTagStats
 // @author       KennyG
-// @namespace    https://stash.shannabower.com/
+// @namespace    http://localhost:9999/
 // @version      0.8.1
 // @description  Adds a Tag Stats button to the scenes page toolbar and shows tag counts
 // @icon         https://docs.stashapp.cc/assets/images/favicon.ico
-// @match        https://stash.shannabower.com/scenes*
+// @match        http://localhost:9999/scenes*
 // @grant        none
 // ==/UserScript==
 
