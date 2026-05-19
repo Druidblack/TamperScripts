@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Data Matches for StashResults
 // @namespace    http://kennyg.com/
-// @version      1.17
+// @version      1.18
 // @description  Highlights components of the matches from StashBox
 // @author       KennyG
 // @match        *://192.168.1.201:9999/scenes*
@@ -237,6 +237,22 @@
             .trim();
     }
 
+    // Stronger normalization for comparing StashBox entity names with local Stash
+    // matched names. This ignores punctuation like !, dots, hyphens, underscores
+    // and multiple spaces, so "Not My Grandpa!" and "Not My Grandpa" match.
+    function normalizeForLooseCompare(value) {
+        return normalizeForCompare(value)
+            .normalize('NFKD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^\p{L}\p{N}]+/gu, '');
+    }
+
+    function areNamesEquivalent(left, right) {
+        const leftLoose = normalizeForLooseCompare(left);
+        const rightLoose = normalizeForLooseCompare(right);
+        return !!leftLoose && !!rightLoose && leftLoose === rightLoose;
+    }
+
     function isTextMatchedBySource(value, sourceText) {
         const normalizedValue = normalizeForCompare(value);
         const normalizedSource = normalizeForCompare(sourceText);
@@ -247,21 +263,79 @@
             normalizedValue.replace(/\s+/g, ''),
             normalizedValue.replace(/\s+/g, '.'),
             normalizedValue.replace(/\s+/g, '_'),
-            normalizedValue.replace(/\s+/g, '-')
+            normalizedValue.replace(/\s+/g, '-'),
+            normalizeForLooseCompare(normalizedValue)
         ];
 
-        return candidates.some(candidate => candidate && normalizedSource.includes(candidate));
+        const looseSource = normalizeForLooseCompare(normalizedSource);
+        return candidates.some(candidate =>
+            candidate && (normalizedSource.includes(candidate) || looseSource.includes(candidate))
+        );
+    }
+
+    function getEntityFieldValue(field) {
+        if (!field) return '';
+
+        const anchor = field.querySelector('b a, b span a, a');
+        const anchorText = anchor && anchor.textContent ? anchor.textContent.trim() : '';
+        if (anchorText) {
+            return anchorText.replace(/\s*\(.*?\)\s*$/, '').trim();
+        }
+
+        const parts = (field.textContent || '').split(':');
+        if (parts.length < 2) return '';
+
+        return parts.slice(1).join(':').replace(/\s*\(.*?\)\s*$/, '').trim();
+    }
+
+    function getEntityMatchLabel(field) {
+        const text = field && field.textContent ? field.textContent : '';
+        return text.includes(':') ? text.split(':')[0].trim() : 'Entity';
+    }
+
+    function getLocalMatchedValuesNearEntity(field) {
+        const row = field.closest('.row');
+        const scope = row || field.closest('li.search-result') || field.parentElement;
+        if (!scope) return [];
+
+        return Array.from(scope.querySelectorAll('.optional-field.included .optional-field-content'))
+            .filter(optionalField => !optionalField.closest('.scene-image-container'))
+            .map(optionalField => {
+                const anchor = optionalField.querySelector('a');
+                if (anchor && anchor.textContent) {
+                    return anchor.textContent.trim();
+                }
+
+                return (optionalField.textContent || '')
+                    .replace(/^\s*(Matched|Совпавший)\s*:\s*/i, '')
+                    .trim();
+            })
+            .filter(Boolean);
+    }
+
+    function isEntityMatchedLocally(field, entityValue) {
+        if (!entityValue) return false;
+
+        return getLocalMatchedValuesNearEntity(field).some(localValue =>
+            areNamesEquivalent(entityValue, localValue)
+        );
     }
 
     function countEntityMatches(result, sourceText) {
         let score = 0;
 
         result.querySelectorAll('.entity-name').forEach(field => {
-            const parts = (field.textContent || '').split(':');
-            if (parts.length < 2) return;
+            const entityValue = getEntityFieldValue(field);
+            if (!entityValue) return;
 
-            const rawValue = parts.slice(1).join(':').replace(/\s*\(.*?\)\s*$/, '');
-            if (isTextMatchedBySource(rawValue, sourceText)) {
+            if (isTextMatchedBySource(entityValue, sourceText)) {
+                score += 2;
+            }
+
+            // Local Stash match is also a strong signal. It covers cases where the
+            // filename does not contain the studio/performer name, but Stash already
+            // rendered "Matched/Совпавший" with the same name next to the entity.
+            if (isEntityMatchedLocally(field, entityValue)) {
                 score += 2;
             }
         });
@@ -494,38 +568,26 @@
             // Also handle dates that Stash renders inside scene metadata headers.
             highlightSceneMetadataDates(searchItem, sourceText);
 
-            // Get the entities, loop through and add verified icon when matched
+            // Get the entities, loop through and add verified icon when matched.
+            // An entity can be verified either from filename/query OR from the local
+            // "Matched/Совпавший" optional field rendered in the same row.
             let entityFields = searchItem.querySelectorAll('.entity-name');
             entityFields.forEach(obfield => {
-                // Normalize entity text and title by lowercasing and removing apostrophes
-                let rawText = obfield.textContent.split(':')[1].toLowerCase().trim().replace(/'/g, "");
-                let matchLabel = obfield.textContent.split(':')[0].trim();
-                const normalizedTitle = sourceText.toLowerCase().replace(/'/g, "");
+                const entityValue = getEntityFieldValue(obfield);
+                if (!entityValue) return;
 
-                // Strip any trailing "(...)" from the entity value
-                let origMatch = rawText.replace(/\s*\(.*?\)\s*$/, "");
+                const matchLabel = getEntityMatchLabel(obfield);
+                const matchedBySource = isTextMatchedBySource(entityValue, sourceText);
+                const matchedLocally = isEntityMatchedLocally(obfield, entityValue);
 
-                // Candidate forms to match inside the source text:
-                // "First Last"
-                // "FirstLast"
-                // "First.Last"
-                // "First_Last"
-                // "First-Last"
-                const candidates = [
-                    origMatch,
-                    origMatch.replace(/ /g, ""),
-                    origMatch.replace(/ /g, "."),
-                    origMatch.replace(/ /g, "_"),
-                    origMatch.replace(/ /g, "-")
-                ];
-
-                const titleNoApos = normalizedTitle;
-
-                const hit = candidates.some(candidate => titleNoApos.includes(candidate));
-
-                if (hit) {
+                if (matchedBySource || matchedLocally) {
                     highlightVerifiedMatch(obfield);
-                    addVerifiedIcon(obfield, `${matchLabel} found in filename`);
+                    addVerifiedIcon(
+                        obfield,
+                        matchedBySource
+                            ? `${matchLabel} found in filename`
+                            : `${matchLabel} matches local Stash item`
+                    );
                 }
             });
 
