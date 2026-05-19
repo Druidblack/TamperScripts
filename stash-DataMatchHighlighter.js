@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Data Matches for StashResults
 // @namespace    http://kennyg.com/
-// @version      1.19.5
+// @version      1.19.6
 // @description  Highlights components of the matches from StashBox
 // @author       KennyG
 // @match        *://192.168.1.201:9999/scenes*
@@ -18,6 +18,7 @@
     // Global constant for color
     const HIGHLIGHT_COLOR = '#00796B'; // Teal color
     const VERIFIED_MATCH_BACKGROUND_COLOR = 'rgba(0, 121, 107, 0.5)'; // Same as optional-field-content
+    const NEAR_DATE_MATCH_BACKGROUND_COLOR = 'rgba(255, 111, 0, 0.75)'; // Orange: date differs by one day
 
     // Alias groups for filename/query-to-entity matching.
     // Add new aliases as additional values in the same group.
@@ -118,6 +119,113 @@
         return bracketedYearPattern.test(titleText || '');
     }
 
+
+
+    function makeUtcDayNumber(year, month, day) {
+        const y = Number(year);
+        const m = Number(month);
+        const d = Number(day);
+        if (!Number.isInteger(y) || !Number.isInteger(m) || !Number.isInteger(d)) return null;
+        if (y < 1900 || y > 2099 || m < 1 || m > 12 || d < 1 || d > 31) return null;
+
+        const date = new Date(Date.UTC(y, m - 1, d));
+        if (
+            date.getUTCFullYear() !== y ||
+            date.getUTCMonth() !== m - 1 ||
+            date.getUTCDate() !== d
+        ) {
+            return null;
+        }
+
+        return Math.floor(date.getTime() / 86400000);
+    }
+
+    function parseIsoDateToUtcDay(dateText) {
+        const match = (dateText || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (!match) return null;
+        return makeUtcDayNumber(match[1], match[2], match[3]);
+    }
+
+    function expandTwoDigitYear(twoDigitYear) {
+        const yy = Number(twoDigitYear);
+        if (!Number.isInteger(yy)) return null;
+        return yy >= 70 ? 1900 + yy : 2000 + yy;
+    }
+
+    function addSourceDateCandidate(candidates, year, month, day) {
+        const dayNumber = makeUtcDayNumber(year, month, day);
+        if (dayNumber === null) return;
+        candidates.push(dayNumber);
+    }
+
+    function getSourceDateCandidates(sourceText) {
+        const haystack = sourceText || '';
+        const candidates = [];
+        const seenKeys = new Set();
+
+        function addUnique(year, month, day) {
+            const key = `${year}-${month}-${day}`;
+            if (seenKeys.has(key)) return;
+            seenKeys.add(key);
+            addSourceDateCandidate(candidates, year, month, day);
+        }
+
+        // YYYY.MM.DD / YYYY-MM-DD / YYYY MM DD
+        haystack.replace(/(^|\D)(\d{4})[.\- ](\d{2})[.\- ](\d{2})(?=\D|$)/g, (full, prefix, year, mm, dd) => {
+            addUnique(year, mm, dd);
+            return full;
+        });
+
+        // YY.MM.DD / YY-MM-DD / YY MM DD, e.g. pervmom.18.03.10 -> 2018-03-10
+        haystack.replace(/(^|\D)(\d{2})[.\- ](\d{2})[.\- ](\d{2})(?=\D|$)/g, (full, prefix, yy, mm, dd) => {
+            const year = expandTwoDigitYear(yy);
+            if (year !== null) addUnique(year, mm, dd);
+            return full;
+        });
+
+        // DD.MM.YYYY / DD-MM-YYYY / DD MM YYYY
+        haystack.replace(/(^|\D)(\d{2})[.\- ](\d{2})[.\- ](\d{4})(?=\D|$)/g, (full, prefix, dd, mm, year) => {
+            addUnique(year, mm, dd);
+            return full;
+        });
+
+        // Compact YYMMDD, e.g. 180310
+        haystack.replace(/(^|\D)(\d{6})(?=\D|$)/g, (full, prefix, compact) => {
+            const yy = compact.slice(0, 2);
+            const mm = compact.slice(2, 4);
+            const dd = compact.slice(4, 6);
+            const year = expandTwoDigitYear(yy);
+            if (year !== null) addUnique(year, mm, dd);
+            return full;
+        });
+
+        // Compact YYYYMMDD and DDMMYYYY. Both are attempted and invalid dates are ignored.
+        haystack.replace(/(^|\D)(\d{8})(?=\D|$)/g, (full, prefix, compact) => {
+            addUnique(compact.slice(0, 4), compact.slice(4, 6), compact.slice(6, 8));
+            addUnique(compact.slice(4, 8), compact.slice(2, 4), compact.slice(0, 2));
+            return full;
+        });
+
+        return candidates;
+    }
+
+    function isDateWithinOneDay(dateText, sourceText) {
+        const resultDay = parseIsoDateToUtcDay(dateText);
+        if (resultDay === null) return false;
+
+        return getSourceDateCandidates(sourceText).some(sourceDay =>
+            Math.abs(resultDay - sourceDay) === 1
+        );
+    }
+
+    function getDateMatchStatus(dateText, sourceText) {
+        if (isDateVerified(dateText, sourceText)) return 'exact';
+        if (isDateWithinOneDay(dateText, sourceText)) return 'near';
+        if (checkDateInTitle(dateText, sourceText)) return 'partial';
+        if (isYearPartiallyMatched(dateText, sourceText)) return 'year';
+        return 'none';
+    }
+
     // Function to check for a fully verified date pattern in the title.
     // e.g. dateText "2021-08-05" matches:
     // - "21.08.05", "21-08-05", "21 08 05", or "210805"
@@ -173,6 +281,32 @@
         });
     }
 
+
+    function highlightNearDateMatch(fieldObject) {
+        if (!fieldObject) return;
+
+        fieldObject.style.backgroundColor = NEAR_DATE_MATCH_BACKGROUND_COLOR;
+        fieldObject.style.color = '#FFFFFF';
+        fieldObject.style.borderRadius = '0.25rem';
+        fieldObject.style.padding = '0.15rem 0.35rem';
+        fieldObject.title = 'Date is within 1 day of filename date';
+
+        fieldObject.querySelectorAll('a').forEach(anchorTag => {
+            anchorTag.style.color = '#FFFFFF';
+        });
+    }
+
+    function highlightDateFieldByStatus(fieldObject, matchStatus) {
+        if (matchStatus === 'exact') {
+            highlightVerifiedMatch(fieldObject);
+            addVerifiedIcon(fieldObject, 'Exact date match in filename');
+        } else if (matchStatus === 'near') {
+            highlightNearDateMatch(fieldObject);
+        } else if (matchStatus === 'partial' || matchStatus === 'year') {
+            highlightField(fieldObject);
+        }
+    }
+
     // Append a verified icon to the given field if not already present.
     // Optional tooltipText allows different explanations (date vs entity match).
     // We wrap the SVG in a small div so the hover target for the tooltip is larger
@@ -223,11 +357,32 @@
         span.style.display = 'inline-block';
     }
 
-    function createTextSpan(text, isMatched, tooltipText) {
+
+    function applyNearDateSpanStyle(span) {
+        span.style.backgroundColor = NEAR_DATE_MATCH_BACKGROUND_COLOR;
+        span.style.color = '#FFFFFF';
+        span.style.borderRadius = '0.25rem';
+        span.style.padding = '0.15rem 0.35rem';
+        span.style.display = 'inline-block';
+    }
+
+    function applyDateSpanStyle(span, matchStatus) {
+        if (matchStatus === 'exact' || matchStatus === 'partial' || matchStatus === 'year') {
+            applyVerifiedSpanStyle(span);
+        } else if (matchStatus === 'near') {
+            applyNearDateSpanStyle(span);
+        }
+    }
+
+    function createTextSpan(text, isMatched, tooltipText, matchStatus) {
         const span = document.createElement('span');
         span.textContent = text;
         if (isMatched) {
-            applyVerifiedSpanStyle(span);
+            if (matchStatus) {
+                applyDateSpanStyle(span, matchStatus);
+            } else {
+                applyVerifiedSpanStyle(span);
+            }
             if (tooltipText) {
                 span.title = tooltipText;
             }
@@ -294,13 +449,10 @@
             const originalText = field.dataset.dmhOriginalText;
             const parts = getSceneMetadataParts(originalText);
             const textMatched = !!parts.textPart && isTextMatchedBySource(parts.textPart, sourceText);
-            const dateMatched = !!parts.datePart && (
-                isDateVerified(parts.datePart, sourceText) ||
-                checkDateInTitle(parts.datePart, sourceText) ||
-                isYearPartiallyMatched(parts.datePart, sourceText)
-            );
+            const dateMatchStatus = parts.datePart ? getDateMatchStatus(parts.datePart, sourceText) : 'none';
+            const dateMatched = dateMatchStatus !== 'none';
 
-            const signature = [originalText, sourceText, textMatched ? 'T1' : 'T0', dateMatched ? 'D1' : 'D0'].join('::');
+            const signature = [originalText, sourceText, textMatched ? 'T1' : 'T0', `D:${dateMatchStatus}`].join('::');
             if (field.dataset.dmhSceneMetadataSignature === signature) return;
             field.dataset.dmhSceneMetadataSignature = signature;
 
@@ -324,7 +476,10 @@
                 const dateSpan = createTextSpan(
                     parts.datePart,
                     dateMatched,
-                    dateMatched ? 'Date match in filename' : ''
+                    dateMatchStatus === 'near'
+                        ? 'Date is within 1 day of filename date'
+                        : (dateMatched ? 'Date match in filename' : ''),
+                    dateMatchStatus
                 );
                 field.appendChild(dateSpan);
             }
@@ -567,11 +722,14 @@
 
             const isoDateMatch = value.match(/^\d{4}-\d{2}-\d{2}$/);
             if (isoDateMatch) {
-                if (isDateVerified(value, sourceText)) {
+                const dateMatchStatus = getDateMatchStatus(value, sourceText);
+                if (dateMatchStatus === 'exact') {
                     score += 3;
-                } else if (checkDateInTitle(value, sourceText)) {
+                } else if (dateMatchStatus === 'near') {
+                    score += 2.5;
+                } else if (dateMatchStatus === 'partial') {
                     score += 2;
-                } else if (isYearPartiallyMatched(value, sourceText)) {
+                } else if (dateMatchStatus === 'year') {
                     score += 1.5;
                 } else {
                     score += 1;
@@ -604,11 +762,14 @@
             }
 
             if (parts.datePart) {
-                if (isDateVerified(parts.datePart, sourceText)) {
+                const dateMatchStatus = getDateMatchStatus(parts.datePart, sourceText);
+                if (dateMatchStatus === 'exact') {
                     score += 3;
-                } else if (checkDateInTitle(parts.datePart, sourceText)) {
+                } else if (dateMatchStatus === 'near') {
+                    score += 2.5;
+                } else if (dateMatchStatus === 'partial') {
                     score += 2;
-                } else if (isYearPartiallyMatched(parts.datePart, sourceText)) {
+                } else if (dateMatchStatus === 'year') {
                     score += 1.5;
                 }
             }
@@ -760,19 +921,10 @@
                 if (isoDateMatch) {
                     // For dates, we ONLY compare against the top "sourceText" (filename + query).
                     // No self-match is possible because the result date lives in the lower card.
-                    const hasComponents = checkDateInTitle(matchText, sourceText);
-                    const hasYearOnlyMatch = isYearPartiallyMatched(matchText, sourceText);
-                    const verified = isDateVerified(matchText, sourceText);
-
-                    // If we have a fully verified date pattern, skip highlight and just add the icon
-                    if (verified) {
-                        highlightVerifiedMatch(field);
-                        addVerifiedIcon(field, 'Exact date match in filename');
-                    }
-                    // Otherwise, keep existing "component match" highlighting behaviour
-                    else if (hasComponents || hasYearOnlyMatch) {
-                        highlightField(field);
-                    }
+                    // Exact matches are green; +/- 1 day matches are orange; weaker partial/year
+                    // matches keep the old green behaviour from 1.19.x.
+                    const dateMatchStatus = getDateMatchStatus(matchText, sourceText);
+                    highlightDateFieldByStatus(field, dateMatchStatus);
                 } else {
                     if (sourceText.includes(matchText))
                     {
