@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Data Matches for StashResults
 // @namespace    http://kennyg.com/
-// @version      1.18
+// @version      1.19
 // @description  Highlights components of the matches from StashBox
 // @author       KennyG
 // @match        *://192.168.1.201:9999/scenes*
@@ -293,6 +293,37 @@
         return text.includes(':') ? text.split(':')[0].trim() : 'Entity';
     }
 
+    function isLocalMatchedText(value) {
+        return /^\s*(Matched|Совпавший)\s*:/i.test(value || '');
+    }
+
+    function getBackgroundAlpha(element) {
+        if (!element) return 0;
+
+        const backgroundColor = (
+            element.style.backgroundColor ||
+            window.getComputedStyle(element).backgroundColor ||
+            ''
+        ).trim().toLowerCase();
+
+        if (!backgroundColor || backgroundColor === 'transparent') return 0;
+
+        const rgbaMatch = backgroundColor.match(/^rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([0-9.]+)\s*\)$/);
+        if (rgbaMatch) {
+            const alpha = parseFloat(rgbaMatch[1]);
+            return Number.isFinite(alpha) ? alpha : 0;
+        }
+
+        const rgbMatch = backgroundColor.match(/^rgb\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*\)$/);
+        return rgbMatch ? 1 : 0;
+    }
+
+    function isVisiblyHighlightedField(element) {
+        // Treat rgba(..., 0) as NOT highlighted. This prevents local "Совпавший"
+        // blocks with transparent background from verifying the entity name.
+        return getBackgroundAlpha(element) > 0.05;
+    }
+
     function getLocalMatchedValuesNearEntity(field) {
         const row = field.closest('.row');
         const scope = row || field.closest('li.search-result') || field.parentElement;
@@ -300,6 +331,7 @@
 
         return Array.from(scope.querySelectorAll('.optional-field.included .optional-field-content'))
             .filter(optionalField => !optionalField.closest('.scene-image-container'))
+            .filter(optionalField => isVisiblyHighlightedField(optionalField))
             .map(optionalField => {
                 const anchor = optionalField.querySelector('a');
                 if (anchor && anchor.textContent) {
@@ -353,6 +385,16 @@
 
             const value = (field.textContent || '').trim();
             if (!value) return;
+
+            if (isLocalMatchedText(value)) {
+                // A local Stash match should influence scoring only when it is visibly
+                // highlighted by Stash/our previous checks. Transparent rgba(..., 0)
+                // means there was no real filename/query match.
+                if (isVisiblyHighlightedField(field)) {
+                    score += 1;
+                }
+                return;
+            }
 
             const isoDateMatch = value.match(/^\d{4}-\d{2}-\d{2}$/);
             if (isoDateMatch) {
@@ -515,7 +557,7 @@
             // Stash normalizes this (e.g. prefixes "20" for years, dot→space, etc.),
             // so combining it with the filename text gives the full search "haystack".
             let queryText = '';
-            const queryInput = document.querySelector('input.text-input.form-control, input.text-input');
+            const queryInput = searchItem.querySelector('input.text-input.form-control, input.text-input');
             if (queryInput && typeof queryInput.value === 'string') {
                 queryText = queryInput.value.trim();
             }
@@ -531,10 +573,12 @@
             resultFields.forEach(field => {
                 let matchText = field.textContent.trim();
 
-                //Don't process the local matches or the empty elements
-               if (matchText === "" || matchText.substring(0, 8) === "Matched:") {
-                   return; // Skip to the next iteration
-               }
+                // Don't process local Stash matched blocks or empty elements.
+                // These blocks look like "Matched:" / "Совпавший:" and should not be
+                // colored by partial filename matching, especially not with rgba(..., 0).
+                if (matchText === "" || isLocalMatchedText(matchText)) {
+                    return; // Skip to the next iteration
+                }
 
                 let isoDateMatch = field.textContent.match(/^\d{4}-\d{2}-\d{2}$/); // Check for ISO date format (YYYY-MM-DD)
                 if (isoDateMatch) {
