@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         Data Matches for StashResults
 // @namespace    http://kennyg.com/
-// @version      1.12
+// @version      1.17
 // @description  Highlights components of the matches from StashBox
 // @author       KennyG
-// @match        *://localhost:9999/scenes*
-// @match        *://localhost:9999/groups*
-// @match        *://localhost:9999/performers*
+// @match        *://192.168.1.201:9999/scenes*
+// @match        *://192.168.1.201:9999/groups*
+// @match        *://192.168.1.201:9999/performers*
 // @grant        none
 // @run-at       document-end
 // @icon         https://raw.githubusercontent.com/stashapp/stash/develop/ui/v2.5/public/favicon.png
@@ -17,11 +17,12 @@
 
     // Global constant for color
     const HIGHLIGHT_COLOR = '#00796B'; // Teal color
+    const VERIFIED_MATCH_BACKGROUND_COLOR = 'rgba(0, 121, 107, 0.5)'; // Same as optional-field-content
 
     // SVG icon shown when the date/entity is fully verified from the filename
     const VERIFIED_ICON_SVG = '<svg aria-hidden="true" focusable="false" data-prefix="far" data-icon="circle-check" class="svg-inline--fa fa-circle-check fa-icon SceneTaggerIcon" role="img" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" color="#0f9960"><path fill="currentColor" d="M243.8 339.8C232.9 350.7 215.1 350.7 204.2 339.8L140.2 275.8C129.3 264.9 129.3 247.1 140.2 236.2C151.1 225.3 168.9 225.3 179.8 236.2L224 280.4L332.2 172.2C343.1 161.3 360.9 161.3 371.8 172.2C382.7 183.1 382.7 200.9 371.8 211.8L243.8 339.8zM512 256C512 397.4 397.4 512 256 512C114.6 512 0 397.4 0 256C0 114.6 114.6 0 256 0C397.4 0 512 114.6 512 256zM256 48C141.1 48 48 141.1 48 256C48 370.9 141.1 464 256 464C370.9 464 464 370.9 464 256C464 141.1 370.9 48 256 48z"></path></svg>';
 
-    // Fingerprint color rules 
+    // Fingerprint color rules
     const COLOR_RULES = [
         {
             range: [0, 10],
@@ -118,6 +119,21 @@
         }
     }
 
+    // Highlight fields that were verified from the filename.
+    // Uses the same visible style as Stash's "optional-field-content" matched block.
+    function highlightVerifiedMatch(fieldObject) {
+        if (!fieldObject) return;
+
+        fieldObject.style.backgroundColor = VERIFIED_MATCH_BACKGROUND_COLOR;
+        fieldObject.style.color = '#FFFFFF';
+        fieldObject.style.borderRadius = '0.25rem';
+        fieldObject.style.padding = '0.15rem 0.35rem';
+
+        fieldObject.querySelectorAll('a').forEach(anchorTag => {
+            anchorTag.style.color = '#FFFFFF';
+        });
+    }
+
     // Append a verified icon to the given field if not already present.
     // Optional tooltipText allows different explanations (date vs entity match).
     // We wrap the SVG in a small div so the hover target for the tooltip is larger
@@ -160,35 +176,247 @@
         fieldObj.style.color = '#FFFFFF'; // White text
     }
 
-    // Highlight the fingerprint summary line "X / Y fingerprints" with color + %
+    // Highlight dates that are rendered in scene metadata headers, for example:
+    // <div class="scene-metadata"><h5>Studio Name • 2019-01-09</h5></div>
+    // This path is separate from optional-field-content because Stash may render the
+    // scene date inside an h5 instead of the normal matched optional field block.
+    function highlightSceneMetadataDates(searchItem, sourceText) {
+        const metadataDateFields = searchItem.querySelectorAll('.scene-metadata h5');
+
+        metadataDateFields.forEach(field => {
+            const text = field.textContent || '';
+            const dateMatches = text.match(/\b\d{4}-\d{2}-\d{2}\b/g);
+            if (!dateMatches || dateMatches.length === 0) return;
+
+            const matchedDate = dateMatches.find(dateText =>
+                isDateVerified(dateText, sourceText) || checkDateInTitle(dateText, sourceText)
+            );
+
+            if (!matchedDate) return;
+
+            highlightVerifiedMatch(field);
+
+            if (isDateVerified(matchedDate, sourceText)) {
+                addVerifiedIcon(field, 'Exact date match in filename');
+            }
+        });
+    }
+
+    // Highlight fingerprint ratio lines by generic "X/Y" pattern only.
+    // This is language-independent and does not rewrite DOM/text nodes,
+    // so it is safe to run from MutationObserver without causing update loops.
     function highlightFingerprints() {
         const matchDivs = document.querySelectorAll('div.font-weight-bold');
 
         matchDivs.forEach(div => {
             const text = div.textContent || '';
-            const match = text.match(/(\d+)\s*\/\s*(\d+)\s*fingerprints/i);
+            const match = text.match(/(\d+)\s*\/\s*(\d+)/);
+            if (!match) return;
 
-            if (match) {
-                const matched = parseInt(match[1], 10);
-                const total = parseInt(match[2], 10);
+            const matched = parseInt(match[1], 10);
+            const total = parseInt(match[2], 10);
+            if (!Number.isFinite(matched) || !Number.isFinite(total) || total <= 0) return;
 
-                if (total > 0) {
-                    const percent = matched / total;
-                    const color = getFingerprintColor(total, percent);
-                    const percentText = ` (${Math.round(percent * 100)}%)`;
+            const percent = matched / total;
+            const color = getFingerprintColor(total, percent);
+            if (!color) return;
 
-                    // Only append percentage if it hasn’t already been added
-                    if (!text.includes(percentText)) {
-                        div.textContent = text + percentText;
-                    }
+            div.style.backgroundColor = color;
+            div.style.color = '#FFFFFF';
+            div.style.borderRadius = '0.25rem';
+            div.style.padding = '0.15rem 0.35rem';
+        });
+    }
 
-                    if (color) {
-                        div.style.backgroundColor = color;
-                        div.style.color = '#FFFFFF'; // Text white
-                    }
-                }
+
+    // Normalize text for lightweight filename/entity comparisons.
+    function normalizeForCompare(value) {
+        return (value || '')
+            .toLowerCase()
+            .replace(/'/g, '')
+            .trim();
+    }
+
+    function isTextMatchedBySource(value, sourceText) {
+        const normalizedValue = normalizeForCompare(value);
+        const normalizedSource = normalizeForCompare(sourceText);
+        if (!normalizedValue || !normalizedSource) return false;
+
+        const candidates = [
+            normalizedValue,
+            normalizedValue.replace(/\s+/g, ''),
+            normalizedValue.replace(/\s+/g, '.'),
+            normalizedValue.replace(/\s+/g, '_'),
+            normalizedValue.replace(/\s+/g, '-')
+        ];
+
+        return candidates.some(candidate => candidate && normalizedSource.includes(candidate));
+    }
+
+    function countEntityMatches(result, sourceText) {
+        let score = 0;
+
+        result.querySelectorAll('.entity-name').forEach(field => {
+            const parts = (field.textContent || '').split(':');
+            if (parts.length < 2) return;
+
+            const rawValue = parts.slice(1).join(':').replace(/\s*\(.*?\)\s*$/, '');
+            if (isTextMatchedBySource(rawValue, sourceText)) {
+                score += 2;
             }
         });
+
+        return score;
+    }
+
+    function countOptionalFieldMatches(result, sourceText) {
+        let score = 0;
+
+        result.querySelectorAll('.optional-field.included .optional-field-content').forEach(field => {
+            // The preview image is usually present in every result, so it is not useful
+            // for deciding which metadata tab/result is the best match.
+            if (field.closest('.scene-image-container')) return;
+
+            const value = (field.textContent || '').trim();
+            if (!value) return;
+
+            const isoDateMatch = value.match(/^\d{4}-\d{2}-\d{2}$/);
+            if (isoDateMatch) {
+                if (isDateVerified(value, sourceText)) {
+                    score += 3;
+                } else if (checkDateInTitle(value, sourceText)) {
+                    score += 2;
+                } else {
+                    score += 1;
+                }
+                return;
+            }
+
+            if (isTextMatchedBySource(value, sourceText)) {
+                score += 2;
+                return;
+            }
+
+            // Stash's included optional-field still means the scraper selected this field.
+            // Give it a small score even if it is not directly found in the filename.
+            score += 1;
+        });
+
+        return score;
+    }
+
+    function countSceneMetadataDateMatches(result, sourceText) {
+        let score = 0;
+
+        result.querySelectorAll('.scene-metadata h5').forEach(field => {
+            const text = field.textContent || '';
+            const dates = text.match(/\b\d{4}-\d{2}-\d{2}\b/g);
+            if (!dates) return;
+
+            dates.forEach(dateText => {
+                if (isDateVerified(dateText, sourceText)) {
+                    score += 3;
+                } else if (checkDateInTitle(dateText, sourceText)) {
+                    score += 2;
+                }
+            });
+        });
+
+        return score;
+    }
+
+    function countFingerprintAndChecksumMatches(result) {
+        let score = 0;
+
+        result.querySelectorAll('div.font-weight-bold').forEach(div => {
+            const text = div.textContent || '';
+            const ratioMatch = text.match(/(\d+)\s*\/\s*(\d+)/);
+
+            if (ratioMatch) {
+                const matched = parseInt(ratioMatch[1], 10);
+                const total = parseInt(ratioMatch[2], 10);
+
+                if (Number.isFinite(matched) && Number.isFinite(total) && total > 0) {
+                    const percent = Math.max(0, Math.min(1, matched / total));
+                    // Ratio is the strongest single indicator, but keep the score bounded.
+                    score += percent * 6;
+                    score += Math.min(matched, 100) / 100;
+                    if (matched === total) score += 1;
+                }
+                return;
+            }
+
+            const hasSuccessIcon = div.querySelector('.SceneTaggerIcon.text-success, .text-success, svg[color="#0f9960"]');
+            const hasDangerIcon = div.querySelector('.text-danger, [data-icon="xmark"]');
+
+            if (hasSuccessIcon) score += 1.5;
+            if (hasDangerIcon) score -= 1;
+        });
+
+        return score;
+    }
+
+    function getSearchResultScore(result, sourceText) {
+        let score = 0;
+
+        score += countOptionalFieldMatches(result, sourceText);
+        score += countEntityMatches(result, sourceText);
+        score += countSceneMetadataDateMatches(result, sourceText);
+        score += countFingerprintAndChecksumMatches(result);
+
+        return score;
+    }
+
+    function getResultActivationSignature(searchResults) {
+        return searchResults.map(result => result.className).join('|');
+    }
+
+    // Select/expand the best search-result inside each search-item.
+    // We click the best result instead of moving DOM nodes, because Stash/React owns the list.
+    function activateBestSearchResult(searchItem, sourceText) {
+        const searchResults = Array.from(searchItem.querySelectorAll('li.search-result'));
+        if (searchResults.length < 2) return;
+
+        const scored = searchResults.map((result, index) => ({
+            result,
+            index,
+            score: getSearchResultScore(result, sourceText)
+        }));
+
+        scored.sort((a, b) => {
+            if (b.score !== a.score) return b.score - a.score;
+            return a.index - b.index;
+        });
+
+        const best = scored[0];
+        if (!best || best.score <= 0) return;
+
+        const currentlyActive = searchResults.find(result =>
+            result.classList.contains('active') || result.classList.contains('selected-result')
+        );
+
+        if (currentlyActive === best.result) return;
+
+        const scoreSignature = scored
+            .map(item => `${item.index}:${Math.round(item.score * 100)}`)
+            .join('|');
+        const activationSignature = getResultActivationSignature(searchResults);
+        const signature = `${scoreSignature}::${activationSignature}`;
+        const now = Date.now();
+        const lastSignature = searchItem.dataset.dmhBestResultActivationSignature || '';
+        const lastClickTime = parseInt(searchItem.dataset.dmhBestResultActivationTime || '0', 10);
+
+        // If Stash does not activate the result for some reason, do not click in a tight loop.
+        if (lastSignature === signature && now - lastClickTime < 1500) return;
+
+        searchItem.dataset.dmhBestResultActivationSignature = signature;
+        searchItem.dataset.dmhBestResultActivationTime = String(now);
+
+        best.result.dispatchEvent(new MouseEvent('click', {
+            bubbles: true,
+            cancelable: true,
+            view: window
+        }));
     }
 
     // Function to highlight the date/field/entity matches
@@ -243,6 +471,7 @@
 
                     // If we have a fully verified date pattern, skip highlight and just add the icon
                     if (verified) {
+                        highlightVerifiedMatch(field);
                         addVerifiedIcon(field, 'Exact date match in filename');
                     }
                     // Otherwise, keep existing "component match" highlighting behaviour
@@ -261,6 +490,9 @@
                     }
                 }
             });
+
+            // Also handle dates that Stash renders inside scene metadata headers.
+            highlightSceneMetadataDates(searchItem, sourceText);
 
             // Get the entities, loop through and add verified icon when matched
             let entityFields = searchItem.querySelectorAll('.entity-name');
@@ -292,9 +524,13 @@
                 const hit = candidates.some(candidate => titleNoApos.includes(candidate));
 
                 if (hit) {
+                    highlightVerifiedMatch(obfield);
                     addVerifiedIcon(obfield, `${matchLabel} found in filename`);
                 }
             });
+
+            // If several scraper result tabs are present, open the one with the strongest match score.
+            activateBestSearchResult(searchItem, sourceText);
         });
     }
 
