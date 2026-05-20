@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Data Matches for StashResults
 // @namespace    http://kennyg.com/
-// @version      1.19.6
+// @version      1.19.6.6
 // @description  Highlights components of the matches from StashBox
 // @author       KennyG
 // @match        *://192.168.1.201:9999/scenes*
@@ -19,6 +19,52 @@
     const HIGHLIGHT_COLOR = '#00796B'; // Teal color
     const VERIFIED_MATCH_BACKGROUND_COLOR = 'rgba(0, 121, 107, 0.5)'; // Same as optional-field-content
     const NEAR_DATE_MATCH_BACKGROUND_COLOR = 'rgba(255, 111, 0, 0.75)'; // Orange: date differs by one day
+
+    // Optional helper button near the Stash scraper toolbar.
+    // When enabled, it adds a button that clicks every visible
+    // "Scrape by fragment / Скрейпить по фрагменту" button on the current page.
+    const ENABLE_SCRAPE_BY_FRAGMENT_ALL_BUTTON = true;
+    const SCRAPE_BY_FRAGMENT_ALL_BUTTON_TEXT = 'Скрейпить все фрагменты';
+    const SCRAPE_BY_FRAGMENT_BUTTON_TEXTS = [
+        'Скрейпить по фрагменту',
+        'Scrape by fragment'
+    ];
+    const SCRAPE_BY_FRAGMENT_CLICK_DELAY_MS = 150;
+    const SCRAPE_BY_FRAGMENT_WAIT_FOR_RESULT = true;
+    const SCRAPE_BY_FRAGMENT_WAIT_TIMEOUT_MS = 20000;
+    const SCRAPE_BY_FRAGMENT_POLL_INTERVAL_MS = 250;
+
+    // Persistent progress counter in the top navbar, inserted next to the
+    // "New / Новый" button. It remains visible after the mass scrape stops.
+    const ENABLE_SCRAPE_PROGRESS_NAVBAR_COUNTER = true;
+    const SCRAPE_PROGRESS_NAVBAR_COUNTER_IDLE_TEXT = 'DMH: остановлен';
+
+    // Optional auto-save after scraping one fragment.
+    // It saves only when a scraper result has a high fingerprint ratio AND
+    // at least one meaningful field match: date, studio, performer/actor, or title.
+    const ENABLE_AUTO_SAVE_HIGH_CONFIDENCE_AFTER_FRAGMENT = true;
+    const AUTO_SAVE_HIGH_CONFIDENCE_FINGERPRINT_PERCENT = 0.90;
+    const AUTO_SAVE_HIGH_CONFIDENCE_MIN_MATCHED_FINGERPRINTS = 8;
+    // Secondary rule: slightly lower fingerprint percent is still safe when
+    // several meaningful metadata fields agree. Example: 17/19 = 89.47%,
+    // which is below 90%, but should be saved when title/date/performer/studio
+    // also match.
+    const AUTO_SAVE_STRONG_FIELDS_FINGERPRINT_PERCENT = 0.85;
+    const AUTO_SAVE_STRONG_FIELDS_MIN_FIELD_MATCHES = 2;
+    const AUTO_SAVE_CLICK_DELAY_MS = 250;
+    const AUTO_SAVE_BUTTON_TEXTS = [
+        'Сохранить',
+        'Save'
+    ];
+
+    // Session-only memory for files that were already scraped during this browser
+    // session but did not produce an automatic high-confidence save. This avoids
+    // repeating expensive "Scrape by fragment" requests when pressing the mass
+    // scrape button again. The memory is kept in sessionStorage, so it is cleared
+    // when the browser/tab session is closed.
+    const ENABLE_SCRAPE_SESSION_MEMORY_FOR_NO_AUTO_MATCH = true;
+    const SCRAPE_SESSION_MEMORY_KEY = 'DataMatchesForStashResults.noAutoMatchFilenames.v2';
+
 
     // Alias groups for filename/query-to-entity matching.
     // Add new aliases as additional values in the same group.
@@ -872,6 +918,26 @@
         }));
     }
 
+    function getSearchItemSourceText(searchItem) {
+        if (!searchItem) return '';
+
+        let sourceText = '';
+        const sourceLink = searchItem.querySelector('a.scene-link.overflow-hidden');
+        if (sourceLink && sourceLink.textContent) {
+            sourceText = sourceLink.textContent.trim();
+        }
+
+        const queryInput = searchItem.querySelector('input.text-input.form-control, input.text-input');
+        if (queryInput && typeof queryInput.value === 'string') {
+            const queryText = queryInput.value.trim();
+            if (queryText) {
+                sourceText = (sourceText + ' ' + queryText).trim();
+            }
+        }
+
+        return sourceText;
+    }
+
     // Function to highlight the date/field/entity matches
     function highlightMatches() {
         let rowcount=0;
@@ -884,24 +950,7 @@
             // Build the "source" text from the TOP of the card only:
             // [a.scene-link.overflow-hidden] + [text-input form-control].
             // This is the query/filename we want to validate the LOWER metadata against.
-            let sourceText = '';
-            const sourceLink = searchItem.querySelector('a.scene-link.overflow-hidden');
-            if (sourceLink && sourceLink.textContent) {
-                sourceText = sourceLink.textContent.trim();
-            }
-
-            // Also include the processed query input (global text-input form-control), if present.
-            // Stash normalizes this (e.g. prefixes "20" for years, dot→space, etc.),
-            // so combining it with the filename text gives the full search "haystack".
-            let queryText = '';
-            const queryInput = searchItem.querySelector('input.text-input.form-control, input.text-input');
-            if (queryInput && typeof queryInput.value === 'string') {
-                queryText = queryInput.value.trim();
-            }
-
-            if (queryText) {
-                sourceText = (sourceText + ' ' + queryText).trim();
-            }
+            const sourceText = getSearchItemSourceText(searchItem);
 
             // Debug: show the source string we use as the haystack (top block only)
             //console.log('[DataMatchHighlighter] sourceText:', sourceText);
@@ -969,10 +1018,663 @@
         });
     }
 
+    function isElementVisible(element) {
+        if (!element) return false;
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+    }
+
+    function isScrapeByFragmentButton(button) {
+        if (!button || button.dataset.dmhScrapeAllButton === 'true') return false;
+        const buttonText = (button.textContent || '').replace(/\s+/g, ' ').trim();
+        return SCRAPE_BY_FRAGMENT_BUTTON_TEXTS.some(expectedText => buttonText === expectedText);
+    }
+
+    function getScrapeByFragmentButtons() {
+        return Array.from(document.querySelectorAll('button.btn.btn-primary'))
+            .filter(isScrapeByFragmentButton)
+            .filter(button => !button.disabled)
+            .filter(isElementVisible);
+    }
+
+    function getCurrentScrapeButtonForSearchItem(searchItem, fallbackButton) {
+        if (fallbackButton && document.body.contains(fallbackButton)) {
+            return fallbackButton;
+        }
+
+        if (!searchItem || !document.body.contains(searchItem)) return null;
+
+        return Array.from(searchItem.querySelectorAll('button.btn.btn-primary'))
+            .find(isScrapeByFragmentButton) || null;
+    }
+
+    function getSearchItemFileName(searchItem) {
+        if (!searchItem) return '';
+
+        const fileNameElement = searchItem.querySelector(
+            'a.scene-link.overflow-hidden .TruncatedText, a.scene-link.overflow-hidden'
+        );
+
+        return (fileNameElement ? fileNameElement.textContent : '')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    function normalizeSessionMemoryFileName(fileName) {
+        return (fileName || '')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toLowerCase();
+    }
+
+    function readNoAutoMatchMemorySet() {
+        if (!ENABLE_SCRAPE_SESSION_MEMORY_FOR_NO_AUTO_MATCH) return new Set();
+
+        try {
+            const raw = window.sessionStorage.getItem(SCRAPE_SESSION_MEMORY_KEY);
+            const values = raw ? JSON.parse(raw) : [];
+            if (!Array.isArray(values)) return new Set();
+            return new Set(values.filter(value => typeof value === 'string' && value.length > 0));
+        } catch (error) {
+            console.warn('[DataMatchHighlighter] Failed to read scrape session memory:', error);
+            return new Set();
+        }
+    }
+
+    function writeNoAutoMatchMemorySet(memorySet) {
+        if (!ENABLE_SCRAPE_SESSION_MEMORY_FOR_NO_AUTO_MATCH) return;
+
+        try {
+            window.sessionStorage.setItem(
+                SCRAPE_SESSION_MEMORY_KEY,
+                JSON.stringify(Array.from(memorySet).sort())
+            );
+        } catch (error) {
+            console.warn('[DataMatchHighlighter] Failed to write scrape session memory:', error);
+        }
+    }
+
+    function isSearchItemRememberedAsNoAutoMatch(searchItem) {
+        if (!ENABLE_SCRAPE_SESSION_MEMORY_FOR_NO_AUTO_MATCH) return false;
+
+        const fileNameKey = normalizeSessionMemoryFileName(getSearchItemFileName(searchItem));
+        if (!fileNameKey) return false;
+
+        return readNoAutoMatchMemorySet().has(fileNameKey);
+    }
+
+    function rememberSearchItemAsNoAutoMatch(searchItem, reason) {
+        if (!ENABLE_SCRAPE_SESSION_MEMORY_FOR_NO_AUTO_MATCH || !searchItem) return false;
+
+        const fileName = getSearchItemFileName(searchItem);
+        const fileNameKey = normalizeSessionMemoryFileName(fileName);
+        if (!fileNameKey) return false;
+
+        const memorySet = readNoAutoMatchMemorySet();
+        if (memorySet.has(fileNameKey)) return false;
+
+        memorySet.add(fileNameKey);
+        writeNoAutoMatchMemorySet(memorySet);
+
+        searchItem.dataset.dmhScrapeNoAutoMatchRemembered = 'true';
+        searchItem.dataset.dmhScrapeNoAutoMatchReason = reason || 'no-auto-save';
+        searchItem.dataset.dmhScrapeNoAutoMatchFile = fileName;
+
+        return true;
+    }
+
+    function getComparisonDataSignature(searchItem) {
+        if (!searchItem) return '';
+
+        const resultCount = searchItem.querySelectorAll('li.search-result').length;
+        const relevantText = Array.from(searchItem.querySelectorAll(
+            'li.search-result .scene-metadata, li.search-result .optional-field-content, li.search-result .entity-name, li.search-result div.font-weight-bold'
+        ))
+            .map(element => (element.textContent || '').replace(/\s+/g, ' ').trim())
+            .filter(Boolean)
+            .join(' || ')
+            .slice(0, 10000);
+
+        return `${resultCount}::${relevantText}`;
+    }
+
+    function hasComparisonData(searchItem) {
+        if (!searchItem) return false;
+
+        return Array.from(searchItem.querySelectorAll('li.search-result')).some(result => {
+            if (result.querySelector('.entity-name')) return true;
+            if (result.querySelector('.scene-metadata')) return true;
+
+            const hasUsefulOptionalText = Array.from(result.querySelectorAll('.optional-field-content'))
+                .some(field => {
+                    if (field.closest('.scene-image-container')) return false;
+                    const text = (field.textContent || '').replace(/\s+/g, ' ').trim();
+                    return text.length > 0;
+                });
+            if (hasUsefulOptionalText) return true;
+
+            return Array.from(result.querySelectorAll('div.font-weight-bold'))
+                .some(div => /\d+\s*\/\s*\d+|PHash|MD5|ПХэш|ПHash|Checksum|контрольн/i.test(div.textContent || ''));
+        });
+    }
+
+
+    function hasNoScrapeResults(searchItem) {
+        if (!searchItem) return false;
+
+        return Array.from(searchItem.querySelectorAll('.text-danger.font-weight-bold, .text-danger'))
+            .some(element => {
+                const text = (element.textContent || '').replace(/\s+/g, ' ').trim();
+                return /ничего\s+не\s+найдено|nothing\s+found|no\s+results/i.test(text);
+            });
+    }
+
+    function getBestFingerprintInfo(result) {
+        let best = null;
+
+        if (!result) return null;
+
+        result.querySelectorAll('div.font-weight-bold').forEach(div => {
+            const text = div.textContent || '';
+            const ratioMatch = text.match(/(\d+)\s*\/\s*(\d+)/);
+            if (!ratioMatch) return;
+
+            const matched = parseInt(ratioMatch[1], 10);
+            const total = parseInt(ratioMatch[2], 10);
+            if (!Number.isFinite(matched) || !Number.isFinite(total) || total <= 0) return;
+
+            const percent = Math.max(0, Math.min(1, matched / total));
+            const info = { matched, total, percent, exact: matched === total };
+            if (!best || info.percent > best.percent || (info.percent === best.percent && info.matched > best.matched)) {
+                best = info;
+            }
+        });
+
+        return best;
+    }
+
+    function isStudioOrActorEntityField(field) {
+        const label = normalizeForCompare(getEntityMatchLabel(field));
+        return /студ|studio|акт[её]р|actor|performer/.test(label);
+    }
+
+    function getHighConfidenceFieldMatches(result, sourceText) {
+        const matches = new Set();
+        if (!result) return matches;
+
+        result.querySelectorAll('.entity-name').forEach(field => {
+            if (!isStudioOrActorEntityField(field)) return;
+
+            const entityValue = getEntityFieldValue(field);
+            if (!entityValue) return;
+
+            const label = normalizeForCompare(getEntityMatchLabel(field));
+            const isActor = /акт[её]р|actor|performer/.test(label);
+            const isStudio = /студ|studio/.test(label);
+
+            if (isTextMatchedBySource(entityValue, sourceText) || isEntityMatchedLocally(field, entityValue)) {
+                if (isActor) matches.add('actor');
+                if (isStudio) matches.add('studio');
+            }
+        });
+
+        result.querySelectorAll('.optional-field.included .optional-field-content').forEach(field => {
+            if (field.closest('.scene-image-container')) return;
+
+            const value = (field.textContent || '').replace(/\s+/g, ' ').trim();
+            if (!value || isLocalMatchedText(value)) return;
+
+            if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+                const dateMatchStatus = getDateMatchStatus(value, sourceText);
+                if (dateMatchStatus !== 'none') matches.add('date');
+                return;
+            }
+
+            const isPotentialTitleField = !!field.closest('.scene-metadata h4, .scene-metadata h5');
+            if (isPotentialTitleField && isTextMatchedBySource(value, sourceText)) {
+                matches.add('title');
+            }
+        });
+
+        result.querySelectorAll('.scene-metadata h5').forEach(field => {
+            const text = field.dataset.dmhOriginalText || field.textContent || '';
+            const parts = getSceneMetadataParts(text);
+
+            if (parts.datePart && getDateMatchStatus(parts.datePart, sourceText) !== 'none') {
+                matches.add('date');
+            }
+
+            if (parts.textPart && isTextMatchedBySource(parts.textPart, sourceText)) {
+                // In Stash scene metadata this text is usually site/studio, but it can
+                // also be useful title-like metadata. Either way it is a meaningful field.
+                matches.add('title');
+            }
+        });
+
+        return matches;
+    }
+
+    function isAutoSaveHighConfidenceMatch(fingerprint, fields) {
+        if (!fingerprint || !fields) return false;
+
+        const fieldCount = fields.size || 0;
+        if (fieldCount <= 0) return false;
+        if (fingerprint.matched < AUTO_SAVE_HIGH_CONFIDENCE_MIN_MATCHED_FINGERPRINTS) return false;
+
+        // Main rule: very high fingerprint match plus at least one meaningful field.
+        if (fingerprint.percent >= AUTO_SAVE_HIGH_CONFIDENCE_FINGERPRINT_PERCENT) {
+            return true;
+        }
+
+        // Secondary rule: 17/19 and similar ratios are visually/semantically strong,
+        // but just below 90%. Allow them only when several metadata fields agree.
+        if (
+            fingerprint.percent >= AUTO_SAVE_STRONG_FIELDS_FINGERPRINT_PERCENT &&
+            fieldCount >= AUTO_SAVE_STRONG_FIELDS_MIN_FIELD_MATCHES
+        ) {
+            return true;
+        }
+
+        return false;
+    }
+
+    function findHighConfidenceAutoSaveCandidate(searchItem) {
+        if (!ENABLE_AUTO_SAVE_HIGH_CONFIDENCE_AFTER_FRAGMENT || !searchItem) return null;
+
+        const sourceText = getSearchItemSourceText(searchItem);
+        if (!sourceText) return null;
+
+        const candidates = Array.from(searchItem.querySelectorAll('li.search-result'))
+            .map((result, index) => {
+                const fingerprint = getBestFingerprintInfo(result);
+                const fields = getHighConfidenceFieldMatches(result, sourceText);
+
+                if (!isAutoSaveHighConfidenceMatch(fingerprint, fields)) return null;
+
+                const baseScore = getSearchResultScore(result, sourceText);
+                const autoSaveScore = baseScore + (fields.size * 5) + (fingerprint.percent * 10) + (fingerprint.exact ? 1 : 0);
+
+                return {
+                    result,
+                    index,
+                    fingerprint,
+                    fields,
+                    score: autoSaveScore
+                };
+            })
+            .filter(Boolean);
+
+        if (candidates.length === 0) return null;
+
+        candidates.sort((a, b) => {
+            if (b.score !== a.score) return b.score - a.score;
+            if (b.fields.size !== a.fields.size) return b.fields.size - a.fields.size;
+            if (b.fingerprint.percent !== a.fingerprint.percent) return b.fingerprint.percent - a.fingerprint.percent;
+            return a.index - b.index;
+        });
+
+        return candidates[0];
+    }
+
+    function isSaveButton(button) {
+        if (!button || button.disabled) return false;
+        const buttonText = (button.textContent || '').replace(/\s+/g, ' ').trim();
+        return AUTO_SAVE_BUTTON_TEXTS.some(expectedText => buttonText === expectedText);
+    }
+
+    function findSaveButtonForResult(result) {
+        if (!result) return null;
+
+        return Array.from(result.querySelectorAll('button.btn.btn-primary'))
+            .filter(isSaveButton)
+            .filter(isElementVisible)[0] || null;
+    }
+
+    async function autoSaveHighConfidenceResult(searchItem) {
+        if (!ENABLE_AUTO_SAVE_HIGH_CONFIDENCE_AFTER_FRAGMENT || !searchItem) return false;
+        if (searchItem.dataset.dmhAutoSavedHighConfidence === 'true') return false;
+
+        const candidate = findHighConfidenceAutoSaveCandidate(searchItem);
+        if (!candidate) return false;
+
+        const activeResult = searchItem.querySelector('li.search-result.active, li.search-result.selected-result');
+        if (activeResult !== candidate.result) {
+            candidate.result.dispatchEvent(new MouseEvent('click', {
+                bubbles: true,
+                cancelable: true,
+                view: window
+            }));
+
+            if (AUTO_SAVE_CLICK_DELAY_MS > 0) {
+                await new Promise(resolve => window.setTimeout(resolve, AUTO_SAVE_CLICK_DELAY_MS));
+            }
+
+            runAllHighlights();
+        }
+
+        const freshActiveResult = searchItem.querySelector('li.search-result.active, li.search-result.selected-result');
+        const saveButton = findSaveButtonForResult(candidate.result) || findSaveButtonForResult(freshActiveResult);
+        if (!saveButton) return false;
+
+        searchItem.dataset.dmhAutoSavedHighConfidence = 'true';
+        searchItem.dataset.dmhAutoSavedHighConfidenceReason = [
+            `fp=${candidate.fingerprint.matched}/${candidate.fingerprint.total}`,
+            `pct=${Math.round(candidate.fingerprint.percent * 100)}%`,
+            `fields=${Array.from(candidate.fields).join(',')}`
+        ].join(';');
+
+        saveButton.dispatchEvent(new MouseEvent('click', {
+            bubbles: true,
+            cancelable: true,
+            view: window
+        }));
+
+        return true;
+    }
+
+    function waitForScrapeComparisonData(searchItem, beforeSignature) {
+        if (!SCRAPE_BY_FRAGMENT_WAIT_FOR_RESULT || !searchItem) {
+            return Promise.resolve(true);
+        }
+
+        const startedAt = Date.now();
+
+        return new Promise(resolve => {
+            const check = () => {
+                if (!document.body.contains(searchItem)) {
+                    resolve(false);
+                    return;
+                }
+
+                if (hasNoScrapeResults(searchItem)) {
+                    resolve(false);
+                    return;
+                }
+
+                const currentSignature = getComparisonDataSignature(searchItem);
+                const changed = currentSignature !== beforeSignature;
+
+                if (changed && hasComparisonData(searchItem)) {
+                    resolve(true);
+                    return;
+                }
+
+                if (Date.now() - startedAt >= SCRAPE_BY_FRAGMENT_WAIT_TIMEOUT_MS) {
+                    resolve(false);
+                    return;
+                }
+
+                window.setTimeout(check, SCRAPE_BY_FRAGMENT_POLL_INTERVAL_MS);
+            };
+
+            window.setTimeout(check, SCRAPE_BY_FRAGMENT_POLL_INTERVAL_MS);
+        });
+    }
+
+    function setScrapeAllButtonState(button, text, disabled) {
+        if (!button) return;
+        button.textContent = text;
+        button.disabled = !!disabled;
+    }
+
+    function findNavbarNewButtonWrapper() {
+        const navbar = document.querySelector('.navbar-buttons');
+        if (!navbar) return null;
+
+        return Array.from(navbar.children).find(child => {
+            const link = child.querySelector && child.querySelector('a[href="/scenes/new"]');
+            if (!link) return false;
+
+            const button = link.querySelector('button');
+            const text = (button ? button.textContent : link.textContent || '')
+                .replace(/\s+/g, ' ')
+                .trim();
+
+            return /^(Новый|New)$/i.test(text);
+        }) || null;
+    }
+
+    function ensureScrapeProgressCounter() {
+        if (!ENABLE_SCRAPE_PROGRESS_NAVBAR_COUNTER) return null;
+
+        const existing = document.querySelector('[data-dmh-scrape-progress-counter="true"]');
+        if (existing) return existing;
+
+        const newButtonWrapper = findNavbarNewButtonWrapper();
+        if (!newButtonWrapper || !newButtonWrapper.parentNode) return null;
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'mr-2 d-flex align-items-center';
+        wrapper.dataset.dmhScrapeProgressCounterWrapper = 'true';
+
+        const badge = document.createElement('span');
+        badge.className = 'badge badge-secondary';
+        badge.dataset.dmhScrapeProgressCounter = 'true';
+        badge.textContent = SCRAPE_PROGRESS_NAVBAR_COUNTER_IDLE_TEXT;
+        badge.title = 'Состояние массового скрейпинга DataMatchHighlighter';
+        badge.style.whiteSpace = 'nowrap';
+        badge.style.fontSize = '0.875rem';
+        badge.style.lineHeight = '1.5';
+        badge.style.padding = '0.45rem 0.6rem';
+
+        wrapper.appendChild(badge);
+        newButtonWrapper.parentNode.insertBefore(wrapper, newButtonWrapper.nextSibling);
+
+        return badge;
+    }
+
+    function setScrapeProgressCounterState(text, mode) {
+        const counter = ensureScrapeProgressCounter();
+        if (!counter) return;
+
+        counter.textContent = text || SCRAPE_PROGRESS_NAVBAR_COUNTER_IDLE_TEXT;
+        counter.dataset.dmhScrapeProgressMode = mode || 'idle';
+
+        counter.classList.remove('badge-secondary', 'badge-primary', 'badge-success', 'badge-warning', 'badge-danger');
+
+        if (mode === 'running') {
+            counter.classList.add('badge-primary');
+        } else if (mode === 'done') {
+            counter.classList.add('badge-success');
+        } else if (mode === 'warning') {
+            counter.classList.add('badge-warning');
+        } else if (mode === 'error') {
+            counter.classList.add('badge-danger');
+        } else {
+            counter.classList.add('badge-secondary');
+        }
+    }
+
+    function formatScrapeProgressCounter(remaining, total, savedCount, rememberedCount, skippedByMemory) {
+        const parts = [`DMH: осталось ${remaining}/${total}`];
+        if (savedCount > 0) parts.push(`сохр. ${savedCount}`);
+        if (rememberedCount > 0) parts.push(`память ${rememberedCount}`);
+        if (skippedByMemory > 0) parts.push(`пропуск ${skippedByMemory}`);
+        return parts.join(' / ');
+    }
+
+    async function clickAllScrapeByFragmentButtons(triggerButton) {
+        const allTasks = getScrapeByFragmentButtons()
+            .map(button => ({
+                button,
+                searchItem: button.closest('div.search-item')
+            }))
+            .filter(task => task.searchItem);
+
+        const rememberedAtStart = ENABLE_SCRAPE_SESSION_MEMORY_FOR_NO_AUTO_MATCH
+            ? allTasks.filter(task => isSearchItemRememberedAsNoAutoMatch(task.searchItem)).length
+            : 0;
+
+        const tasks = allTasks.filter(task => !isSearchItemRememberedAsNoAutoMatch(task.searchItem));
+        const total = tasks.length;
+        let skippedByMemory = rememberedAtStart;
+        let savedCount = 0;
+        let rememberedCount = 0;
+
+        if (total === 0) {
+            const emptyText = skippedByMemory > 0
+                ? `Все пропущены: ${skippedByMemory}`
+                : 'Фрагменты не найдены';
+
+            setScrapeAllButtonState(triggerButton, emptyText, true);
+            setScrapeProgressCounterState(
+                skippedByMemory > 0
+                    ? `DMH: остановлен / пропущено ${skippedByMemory}`
+                    : 'DMH: нет задач / остановлен',
+                skippedByMemory > 0 ? 'warning' : 'idle'
+            );
+            window.setTimeout(() => {
+                setScrapeAllButtonState(triggerButton, SCRAPE_BY_FRAGMENT_ALL_BUTTON_TEXT, false);
+            }, 1200);
+            return;
+        }
+
+        setScrapeAllButtonState(triggerButton, `Скрейпинг 0/${total}`, true);
+        setScrapeProgressCounterState(formatScrapeProgressCounter(total, total, savedCount, rememberedCount, skippedByMemory), 'running');
+
+        for (let index = 0; index < tasks.length; index++) {
+            const task = tasks[index];
+            setScrapeProgressCounterState(formatScrapeProgressCounter(total - index, total, savedCount, rememberedCount, skippedByMemory), 'running');
+
+            // The same filename can appear more than once on a long page. If a previous
+            // iteration remembered it as having no auto-save candidate, skip duplicate
+            // rows in the same run as well.
+            if (isSearchItemRememberedAsNoAutoMatch(task.searchItem)) {
+                skippedByMemory += 1;
+                setScrapeAllButtonState(triggerButton, `Пропуск ${index + 1}/${total}`, true);
+                setScrapeProgressCounterState(formatScrapeProgressCounter(total - index - 1, total, savedCount, rememberedCount, skippedByMemory), 'running');
+                continue;
+            }
+
+            const scrapeButton = getCurrentScrapeButtonForSearchItem(task.searchItem, task.button);
+            const beforeSignature = getComparisonDataSignature(task.searchItem);
+            let clicked = false;
+            let saved = false;
+
+            if (scrapeButton && !scrapeButton.disabled && isElementVisible(scrapeButton)) {
+                scrapeButton.dispatchEvent(new MouseEvent('click', {
+                    bubbles: true,
+                    cancelable: true,
+                    view: window
+                }));
+                clicked = true;
+            }
+
+            if (clicked && SCRAPE_BY_FRAGMENT_WAIT_FOR_RESULT) {
+                setScrapeAllButtonState(triggerButton, `Ожидание ${index + 1}/${total}`, true);
+                setScrapeProgressCounterState(`DMH: ожидание ${index + 1}/${total} / осталось ${total - index}`, 'running');
+                await waitForScrapeComparisonData(task.searchItem, beforeSignature);
+                runAllHighlights();
+
+                if (hasNoScrapeResults(task.searchItem)) {
+                    rememberSearchItemAsNoAutoMatch(task.searchItem, 'nothing-found');
+                    rememberedCount += 1;
+                    setScrapeAllButtonState(triggerButton, `Не найдено ${index + 1}/${total}`, true);
+                    setScrapeProgressCounterState(formatScrapeProgressCounter(total - index - 1, total, savedCount, rememberedCount, skippedByMemory), 'running');
+                } else if (ENABLE_AUTO_SAVE_HIGH_CONFIDENCE_AFTER_FRAGMENT) {
+                    saved = await autoSaveHighConfidenceResult(task.searchItem);
+
+                    if (saved) {
+                        savedCount += 1;
+                        setScrapeAllButtonState(triggerButton, `Сохранено ${index + 1}/${total}`, true);
+                        setScrapeProgressCounterState(formatScrapeProgressCounter(total - index - 1, total, savedCount, rememberedCount, skippedByMemory), 'running');
+                    } else {
+                        rememberSearchItemAsNoAutoMatch(task.searchItem, 'no-high-confidence-auto-save');
+                        rememberedCount += 1;
+                        setScrapeAllButtonState(triggerButton, `В память ${index + 1}/${total}`, true);
+                        setScrapeProgressCounterState(formatScrapeProgressCounter(total - index - 1, total, savedCount, rememberedCount, skippedByMemory), 'running');
+                    }
+                }
+            } else if (clicked && ENABLE_AUTO_SAVE_HIGH_CONFIDENCE_AFTER_FRAGMENT) {
+                runAllHighlights();
+                saved = await autoSaveHighConfidenceResult(task.searchItem);
+
+                if (saved) {
+                    savedCount += 1;
+                    setScrapeAllButtonState(triggerButton, `Сохранено ${index + 1}/${total}`, true);
+                } else {
+                    rememberSearchItemAsNoAutoMatch(task.searchItem, 'no-high-confidence-auto-save');
+                    rememberedCount += 1;
+                    setScrapeAllButtonState(triggerButton, `В память ${index + 1}/${total}`, true);
+                }
+            }
+
+            setScrapeAllButtonState(triggerButton, `Скрейпинг ${index + 1}/${total}`, true);
+            setScrapeProgressCounterState(formatScrapeProgressCounter(total - index - 1, total, savedCount, rememberedCount, skippedByMemory), 'running');
+
+            if (SCRAPE_BY_FRAGMENT_CLICK_DELAY_MS > 0 && index < tasks.length - 1) {
+                await new Promise(resolve => window.setTimeout(resolve, SCRAPE_BY_FRAGMENT_CLICK_DELAY_MS));
+            }
+        }
+
+        const summaryParts = [`Готово: ${total}`];
+        if (savedCount > 0) summaryParts.push(`сохр. ${savedCount}`);
+        if (rememberedCount > 0) summaryParts.push(`память ${rememberedCount}`);
+        if (skippedByMemory > 0) summaryParts.push(`пропущ. ${skippedByMemory}`);
+
+        setScrapeAllButtonState(triggerButton, summaryParts.join(' / '), true);
+        setScrapeProgressCounterState(`DMH: готово / осталось 0/${total} / ${summaryParts.slice(1).join(' / ') || 'без действий'}`, 'done');
+        window.setTimeout(() => {
+            setScrapeAllButtonState(triggerButton, SCRAPE_BY_FRAGMENT_ALL_BUTTON_TEXT, false);
+        }, 1500);
+    }
+
+    function findScraperToolbar() {
+        return Array.from(document.querySelectorAll('div.d-flex')).find(container => {
+            const text = (container.textContent || '').replace(/\s+/g, ' ').trim();
+            const hasSubmitButton = text.includes('Отправить') || text.includes('Submit');
+            const hasClearButton = text.includes('Убрать всё') || text.includes('Clear all');
+            const hasConfigButton = !!container.querySelector('button[title="Показать конфигурацию"], button[title="Show configuration"]');
+
+            // Some Stash layouts include "Hide unmatched scenes", and some do not.
+            // The stable anchors for this toolbar are Submit + Clear all + Config.
+            return hasSubmitButton && hasClearButton && hasConfigButton;
+        });
+    }
+
+    function ensureScrapeByFragmentAllButton() {
+        if (!ENABLE_SCRAPE_BY_FRAGMENT_ALL_BUTTON) return;
+
+        const toolbar = findScraperToolbar();
+        if (!toolbar) return;
+        if (toolbar.querySelector('[data-dmh-scrape-all-button="true"]')) return;
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'ml-1';
+        wrapper.dataset.dmhScrapeAllButton = 'true';
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn-primary';
+        button.textContent = SCRAPE_BY_FRAGMENT_ALL_BUTTON_TEXT;
+        button.title = 'Последовательно нажать все «Скрейпить по фрагменту» и дождаться появления данных для сравнения';
+        button.dataset.dmhScrapeAllButton = 'true';
+        button.addEventListener('click', event => {
+            event.preventDefault();
+            event.stopPropagation();
+            clickAllScrapeByFragmentButtons(button);
+        });
+
+        wrapper.appendChild(button);
+
+        const configButtonWrapper = Array.from(toolbar.children).find(child =>
+            child.querySelector('button[title="Показать конфигурацию"], button[title="Show configuration"]')
+        );
+
+        if (configButtonWrapper) {
+            toolbar.insertBefore(wrapper, configButtonWrapper);
+        } else {
+            toolbar.appendChild(wrapper);
+        }
+    }
+
     // Run all highlight behaviours together
     function runAllHighlights() {
         highlightMatches();
         highlightFingerprints();
+        ensureScrapeByFragmentAllButton();
+        ensureScrapeProgressCounter();
     }
 
     // MutationObserver to watch for DOM changes and trigger the highlight functions
