@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Data Matches for StashResults
 // @namespace    http://kennyg.com/
-// @version      1.19.6.6
+// @version      1.19.6.8
 // @description  Highlights components of the matches from StashBox
 // @author       KennyG
 // @match        *://192.168.1.201:9999/scenes*
@@ -29,7 +29,9 @@
         'Скрейпить по фрагменту',
         'Scrape by fragment'
     ];
-    const SCRAPE_BY_FRAGMENT_CLICK_DELAY_MS = 150;
+    // Delay after finishing one fragment before starting the next scrape request.
+    // This protects Stash/StashBox from rapid-fire requests during mass scraping.
+    const SCRAPE_BY_FRAGMENT_CLICK_DELAY_MS = 750;
     const SCRAPE_BY_FRAGMENT_WAIT_FOR_RESULT = true;
     const SCRAPE_BY_FRAGMENT_WAIT_TIMEOUT_MS = 20000;
     const SCRAPE_BY_FRAGMENT_POLL_INTERVAL_MS = 250;
@@ -51,7 +53,12 @@
     // also match.
     const AUTO_SAVE_STRONG_FIELDS_FINGERPRINT_PERCENT = 0.85;
     const AUTO_SAVE_STRONG_FIELDS_MIN_FIELD_MATCHES = 2;
-    const AUTO_SAVE_CLICK_DELAY_MS = 250;
+    // Delay after selecting a candidate result before looking for/clicking Save.
+    const AUTO_SAVE_CLICK_DELAY_MS = 2000;
+    // Extra delay right before pressing Save and after pressing Save.
+    // These pauses make automatic scraping/saving less aggressive.
+    const AUTO_SAVE_BEFORE_SAVE_CLICK_DELAY_MS = 2000;
+    const AUTO_SAVE_AFTER_SAVE_CLICK_DELAY_MS = 2000;
     const AUTO_SAVE_BUTTON_TEXTS = [
         'Сохранить',
         'Save'
@@ -64,6 +71,12 @@
     // when the browser/tab session is closed.
     const ENABLE_SCRAPE_SESSION_MEMORY_FOR_NO_AUTO_MATCH = true;
     const SCRAPE_SESSION_MEMORY_KEY = 'DataMatchesForStashResults.noAutoMatchFilenames.v2';
+
+    // Optional button near the mass scrape button that clears the session-only
+    // "no automatic match" memory. Use it when you want the next mass scrape
+    // run to retry files that were previously skipped during the current session.
+    const ENABLE_CLEAR_SCRAPE_SESSION_MEMORY_BUTTON = true;
+    const CLEAR_SCRAPE_SESSION_MEMORY_BUTTON_TEXT = 'Очистить память';
 
 
     // Alias groups for filename/query-to-entity matching.
@@ -1095,6 +1108,25 @@
         }
     }
 
+    function clearNoAutoMatchMemorySet() {
+        if (!ENABLE_SCRAPE_SESSION_MEMORY_FOR_NO_AUTO_MATCH) return 0;
+
+        const previousSize = readNoAutoMatchMemorySet().size;
+
+        try {
+            window.sessionStorage.removeItem(SCRAPE_SESSION_MEMORY_KEY);
+        } catch (error) {
+            console.warn('[DataMatchHighlighter] Failed to clear scrape session memory:', error);
+        }
+
+        document.querySelectorAll('[data-dmh-scrape-no-auto-match-file]').forEach(searchItem => {
+            delete searchItem.dataset.dmhScrapeNoAutoMatchReason;
+            delete searchItem.dataset.dmhScrapeNoAutoMatchFile;
+        });
+
+        return previousSize;
+    }
+
     function isSearchItemRememberedAsNoAutoMatch(searchItem) {
         if (!ENABLE_SCRAPE_SESSION_MEMORY_FOR_NO_AUTO_MATCH) return false;
 
@@ -1364,11 +1396,19 @@
             `fields=${Array.from(candidate.fields).join(',')}`
         ].join(';');
 
+        if (AUTO_SAVE_BEFORE_SAVE_CLICK_DELAY_MS > 0) {
+            await new Promise(resolve => window.setTimeout(resolve, AUTO_SAVE_BEFORE_SAVE_CLICK_DELAY_MS));
+        }
+
         saveButton.dispatchEvent(new MouseEvent('click', {
             bubbles: true,
             cancelable: true,
             view: window
         }));
+
+        if (AUTO_SAVE_AFTER_SAVE_CLICK_DELAY_MS > 0) {
+            await new Promise(resolve => window.setTimeout(resolve, AUTO_SAVE_AFTER_SAVE_CLICK_DELAY_MS));
+        }
 
         return true;
     }
@@ -1604,6 +1644,8 @@
             setScrapeProgressCounterState(formatScrapeProgressCounter(total - index - 1, total, savedCount, rememberedCount, skippedByMemory), 'running');
 
             if (SCRAPE_BY_FRAGMENT_CLICK_DELAY_MS > 0 && index < tasks.length - 1) {
+                setScrapeAllButtonState(triggerButton, `Пауза ${index + 1}/${total}`, true);
+                setScrapeProgressCounterState(`DMH: пауза / осталось ${total - index - 1}/${total}`, 'running');
                 await new Promise(resolve => window.setTimeout(resolve, SCRAPE_BY_FRAGMENT_CLICK_DELAY_MS));
             }
         }
@@ -1669,11 +1711,55 @@
         }
     }
 
+    function ensureClearScrapeSessionMemoryButton() {
+        if (!ENABLE_CLEAR_SCRAPE_SESSION_MEMORY_BUTTON || !ENABLE_SCRAPE_SESSION_MEMORY_FOR_NO_AUTO_MATCH) return;
+
+        const toolbar = findScraperToolbar();
+        if (!toolbar) return;
+        if (toolbar.querySelector('[data-dmh-clear-scrape-memory-button="true"]')) return;
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'ml-1';
+        wrapper.dataset.dmhClearScrapeMemoryButton = 'true';
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn-secondary';
+        button.textContent = CLEAR_SCRAPE_SESSION_MEMORY_BUTTON_TEXT;
+        button.title = 'Очистить память файлов, для которых в этой сессии не было найдено автоматическое совпадение';
+        button.dataset.dmhClearScrapeMemoryButton = 'true';
+        button.addEventListener('click', event => {
+            event.preventDefault();
+            event.stopPropagation();
+
+            const clearedCount = clearNoAutoMatchMemorySet();
+            button.textContent = `Память очищена (${clearedCount})`;
+            setScrapeProgressCounterState(`DMH: память очищена (${clearedCount}) / остановлен`, 'done');
+
+            window.setTimeout(() => {
+                button.textContent = CLEAR_SCRAPE_SESSION_MEMORY_BUTTON_TEXT;
+            }, 1800);
+        });
+
+        wrapper.appendChild(button);
+
+        const configButtonWrapper = Array.from(toolbar.children).find(child =>
+            child.querySelector('button[title="Показать конфигурацию"], button[title="Show configuration"]')
+        );
+
+        if (configButtonWrapper) {
+            toolbar.insertBefore(wrapper, configButtonWrapper);
+        } else {
+            toolbar.appendChild(wrapper);
+        }
+    }
+
     // Run all highlight behaviours together
     function runAllHighlights() {
         highlightMatches();
         highlightFingerprints();
         ensureScrapeByFragmentAllButton();
+        ensureClearScrapeSessionMemoryButton();
         ensureScrapeProgressCounter();
     }
 
