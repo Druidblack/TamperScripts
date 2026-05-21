@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Data Matches for StashResults
 // @namespace    http://kennyg.com/
-// @version      1.19.6.8
+// @version      1.19.6.9
 // @description  Highlights components of the matches from StashBox
 // @author       KennyG
 // @match        *://192.168.1.201:9999/scenes*
@@ -57,8 +57,15 @@
     const AUTO_SAVE_CLICK_DELAY_MS = 2000;
     // Extra delay right before pressing Save and after pressing Save.
     // These pauses make automatic scraping/saving less aggressive.
-    const AUTO_SAVE_BEFORE_SAVE_CLICK_DELAY_MS = 2000;
-    const AUTO_SAVE_AFTER_SAVE_CLICK_DELAY_MS = 2000;
+    const AUTO_SAVE_BEFORE_SAVE_CLICK_DELAY_MS = 600;
+    const AUTO_SAVE_AFTER_SAVE_CLICK_DELAY_MS = 900;
+    // After StashBox returns scraper results, React can still render metadata fields
+    // and the per-result Save button a little later. Retry auto-save briefly before
+    // writing the file name to session memory as "no automatic match".
+    const AUTO_SAVE_CANDIDATE_RETRY_TIMEOUT_MS = 5000;
+    const AUTO_SAVE_CANDIDATE_RETRY_INTERVAL_MS = 2000;
+    const AUTO_SAVE_SAVE_BUTTON_WAIT_TIMEOUT_MS = 3000;
+    const AUTO_SAVE_SAVE_BUTTON_WAIT_INTERVAL_MS = 2000;
     const AUTO_SAVE_BUTTON_TEXTS = [
         'Сохранить',
         'Save'
@@ -70,7 +77,7 @@
     // scrape button again. The memory is kept in sessionStorage, so it is cleared
     // when the browser/tab session is closed.
     const ENABLE_SCRAPE_SESSION_MEMORY_FOR_NO_AUTO_MATCH = true;
-    const SCRAPE_SESSION_MEMORY_KEY = 'DataMatchesForStashResults.noAutoMatchFilenames.v2';
+    const SCRAPE_SESSION_MEMORY_KEY = 'DataMatchesForStashResults.noAutoMatchFilenames.v3';
 
     // Optional button near the mass scrape button that clears the session-only
     // "no automatic match" memory. Use it when you want the next mass scrape
@@ -1385,8 +1392,19 @@
             runAllHighlights();
         }
 
-        const freshActiveResult = searchItem.querySelector('li.search-result.active, li.search-result.selected-result');
-        const saveButton = findSaveButtonForResult(candidate.result) || findSaveButtonForResult(freshActiveResult);
+        let freshActiveResult = searchItem.querySelector('li.search-result.active, li.search-result.selected-result');
+        let saveButton = findSaveButtonForResult(candidate.result) || findSaveButtonForResult(freshActiveResult);
+
+        if (!saveButton && AUTO_SAVE_SAVE_BUTTON_WAIT_TIMEOUT_MS > 0) {
+            const waitStartedAt = Date.now();
+            while (!saveButton && Date.now() - waitStartedAt < AUTO_SAVE_SAVE_BUTTON_WAIT_TIMEOUT_MS) {
+                await new Promise(resolve => window.setTimeout(resolve, AUTO_SAVE_SAVE_BUTTON_WAIT_INTERVAL_MS));
+                runAllHighlights();
+                freshActiveResult = searchItem.querySelector('li.search-result.active, li.search-result.selected-result');
+                saveButton = findSaveButtonForResult(candidate.result) || findSaveButtonForResult(freshActiveResult);
+            }
+        }
+
         if (!saveButton) return false;
 
         searchItem.dataset.dmhAutoSavedHighConfidence = 'true';
@@ -1411,6 +1429,28 @@
         }
 
         return true;
+    }
+
+    async function autoSaveHighConfidenceResultWithRetry(searchItem) {
+        if (!ENABLE_AUTO_SAVE_HIGH_CONFIDENCE_AFTER_FRAGMENT || !searchItem) return false;
+
+        const startedAt = Date.now();
+
+        while (true) {
+            runAllHighlights();
+
+            const candidate = findHighConfidenceAutoSaveCandidate(searchItem);
+            if (candidate) {
+                const saved = await autoSaveHighConfidenceResult(searchItem);
+                if (saved) return true;
+            }
+
+            if (Date.now() - startedAt >= AUTO_SAVE_CANDIDATE_RETRY_TIMEOUT_MS) {
+                return false;
+            }
+
+            await new Promise(resolve => window.setTimeout(resolve, AUTO_SAVE_CANDIDATE_RETRY_INTERVAL_MS));
+        }
     }
 
     function waitForScrapeComparisonData(searchItem, beforeSignature) {
@@ -1613,7 +1653,7 @@
                     setScrapeAllButtonState(triggerButton, `Не найдено ${index + 1}/${total}`, true);
                     setScrapeProgressCounterState(formatScrapeProgressCounter(total - index - 1, total, savedCount, rememberedCount, skippedByMemory), 'running');
                 } else if (ENABLE_AUTO_SAVE_HIGH_CONFIDENCE_AFTER_FRAGMENT) {
-                    saved = await autoSaveHighConfidenceResult(task.searchItem);
+                    saved = await autoSaveHighConfidenceResultWithRetry(task.searchItem);
 
                     if (saved) {
                         savedCount += 1;
@@ -1628,7 +1668,7 @@
                 }
             } else if (clicked && ENABLE_AUTO_SAVE_HIGH_CONFIDENCE_AFTER_FRAGMENT) {
                 runAllHighlights();
-                saved = await autoSaveHighConfidenceResult(task.searchItem);
+                saved = await autoSaveHighConfidenceResultWithRetry(task.searchItem);
 
                 if (saved) {
                     savedCount += 1;
